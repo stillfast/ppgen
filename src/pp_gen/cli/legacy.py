@@ -236,7 +236,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_plot(args: argparse.Namespace) -> int:
-    from ..plotting.log_derivatives import plot
+    from ..plotting.dispatch import plot
 
     result = plot(Path(args.input),
                   outdir=Path(args.outdir) if args.outdir else None,

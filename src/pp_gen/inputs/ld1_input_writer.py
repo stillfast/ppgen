@@ -20,6 +20,7 @@ from typing import Any, List, Mapping, Optional, Sequence
 
 from ..core.elements import symbol as element_symbol
 from ..core.errors import RenderError
+from typing import Dict
 
 #: namelist 段名（``&input`` 里的 ``input``）
 _SECTION_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

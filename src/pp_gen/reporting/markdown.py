@@ -410,7 +410,7 @@ def render_point(point: PointMetrics, *, template: PlotSpec, write: bool,
         return point
     from dataclasses import replace
 
-    from ..plotting.log_derivatives import plot_with_spec
+    from ..plotting.dispatch import plot_with_spec
 
     local_plot = point.directory / "plot.json"
     if not local_plot.exists():

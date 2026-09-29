@@ -317,7 +317,6 @@ def decision_panels(orbitals: Sequence[OrbitalReport], *, metric: str,
     * ``coincide`` 跟着 ΔE 走 —— 图上实心＝重合、空心＝不重合；
     * 跑失败（或算不出排序量）的点不进曲线，只把它们的 ``r_c`` 记在子图角落。
     """
-    from ..plotting.decision import DecisionPanel, DecisionPoint
 
     panels: List[object] = []
     for item in orbitals:
@@ -357,7 +356,6 @@ def decision_spec(metric: str, scope: str,
                   threshold: Optional[float],
                   axis_key: object = None) -> object:
     """这张图的轴标题与标题（**英文**：matplotlib 默认字体没有中文字形）。"""
-    from ..plotting.decision import DecisionSpec
 
     axis = scan_axis.axis_of(getattr(axis_key, "key", axis_key)) \
         if axis_key is not None else scan_axis.RCUT_AXIS
@@ -403,7 +401,6 @@ def _draw_decision(orbitals: Sequence[OrbitalReport], *, metric: str,
                    scope: str, threshold: Optional[float], outdir: Path,
                    write: bool, warnings: List[str]) -> Optional[Path]:
     """画"为什么选这个 r_c"那张图；画不出来只记一条提醒。"""
-    from ..plotting.decision import draw
 
     panels = decision_panels(orbitals, metric=metric, scope=scope)
     spec = decision_spec(metric, scope, threshold,

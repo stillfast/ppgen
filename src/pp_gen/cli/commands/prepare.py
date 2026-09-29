@@ -30,39 +30,44 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
 
 def _report(result: PrepareResult, *, dry_run: bool = False) -> None:
-    """把 prepare 的结果讲清楚：参数从哪来、qe_path 定成什么、文件写到哪。"""
+    """Report the prepare result: where the parameters came from, the resolved
+    qe_path and the files that were written.
+    """
     print(f"workflow   : {result.workflow}")
-    print("参数文件   : " + "、".join(str(p) for p in result.parameter_files))
+    print("param files: " + ", ".join(str(p) for p in result.parameter_files))
     if result.qe_path_filled:
-        source = "input.json 里是占位符，已补默认值" + (
-            "，并写回 input.json" if result.qe_path_written else "")
+        source = "placeholder in input.json, filled with the default" + (
+            ", written back to input.json" if result.qe_path_written else "")
     else:
-        source = "来自 input.json"
-    print(f"qe_path    : {result.qe_path}（{source}）")
+        source = "from input.json"
+    print(f"qe_path    : {result.qe_path} ({source})")
     print(f"ld1.x      : {config.qe_binary(result.qe_path)}")
 
     if result.scans:
         _report_scan_prepare(result, dry_run=dry_run)
     elif result.written:
-        action = "已覆盖" if result.overwrote else "已生成"
-        print(f"{action}     : {result.output_path}")
+        action = "overwrote" if result.overwrote else "generated"
+        print(f"{action}  : {result.output_path}")
     else:
-        print(f"干跑       : 没有落盘；下面是 {result.output_path} 的内容")
+        print(f"dry run    : nothing written; content of {result.output_path} below")
         print("-" * 60)
         sys.stdout.write(result.text)
         print("-" * 60)
 
     for warning in result.warnings:
-        print(f"警告       : {warning}", file=sys.stderr)
+        print(f"warning    : {warning}", file=sys.stderr)
 
 
 def _report_scan_prepare(result: PrepareResult, *, dry_run: bool) -> None:
-    """扫描型 prepare：不逐条列几十个文件，按维度给一行 + 一个样例路径。"""
+    """Report a scan prepare: one line per scan dimension plus a sample path,
+    instead of listing every generated file.
+    """
     from ...scans import points as scan
 
     if result.scan_points and isinstance(result.scan_points[0], scan.ConfigPoint):
-        print(f"扫描       : {len(result.scan_points)} 个测试组态"
-              f"（生成 PP 的 config 固定，只换 &test 的 configts(1)）")
+        print(f"scan       : {len(result.scan_points)} test configurations"
+              f" (the configuration that generates the pseudopotential is fixed,"
+              f" only &test configts(1) changes)")
         for index, text, prefix in scan.config_summary_rows(result.scan_points):
             print(f"           : [{index:>2}] {text:<24}  ->  {prefix}/")
         return
@@ -70,37 +75,38 @@ def _report_scan_prepare(result: PrepareResult, *, dry_run: bool) -> None:
         point = result.scan_points[0]
         ranges = [name for name in result.scan_sections
                   if name != settings.UPDATE_KEY]
-        print(f"扫描       : {scan.describe_namelist(result.scan_points)}"
-              f"（&{point.section} 的 {point.key}，范围写在 {ranges or '?'} 里，"
-              f"每个值一个目录）")
+        print(f"scan       : {scan.describe_namelist(result.scan_points)}"
+              f" (&{point.section} {point.key}, ranges from {ranges or '?'},"
+              f" one directory per value)")
         for name, values, prefix in scan.namelist_summary_rows(result.scan_points):
             print(f"           : {name}  = {values}"
                   f"   ->  {prefix}/{point.axis.tag}*/")
     elif result.scan_points and isinstance(result.scan_points[0], scan.EnergyPoint):
         key = settings.ENERGY_RANGE_KEY
-        print(f"扫描       : {scan.describe_energy(result.scan_points)}"
-              f"（中心取每张 occ=0 卡片现在的 ener + {key} 偏移，"
-              f"每张卡片一个目录）")
+        print(f"scan       : {scan.describe_energy(result.scan_points)}"
+              f" (center = each occ=0 card's current ener + the {key} offset,"
+              f" one directory per card)")
         for card, values, prefix in scan.energy_summary_rows(result.scan_points):
             print(f"           : {card}  ener = {values}"
                   f"   ->  {prefix}/ener_*/")
     else:
-        print(f"扫描       : {scan.describe(result.scan_points)}"
-              f"（中心取 orbitals 卡片里的 rcut + rc_range 偏移，每个 rcut 一个目录）")
+        print(f"scan       : {scan.describe(result.scan_points)}"
+              f" (center = the rcut in the orbitals card + the rc_range offset,"
+              f" one directory per rcut)")
         for orbital, values, prefix in scan.summary_rows(result.scan_points):
             print(f"           : {orbital}  rc = {values}"
                   f"   ->  {prefix}/rc_*/")
     if result.runs_dir is not None:
-        print(f"产物目录   : {result.runs_dir}")
+        print(f"runs dir   : {result.runs_dir}")
     example = result.targets[len(result.targets) // 2]
     if result.written_count:
         changed = result.changed_count
-        extra = f"，其中 {changed} 个覆盖了内容不同的旧文件" if changed else ""
-        print(f"已生成     : {result.written_count} 个 {example.name}"
-              f"（如 {example.path}）{extra}")
+        extra = f", {changed} overwrote an existing differing file" if changed else ""
+        print(f"generated  : {result.written_count} {example.name}"
+              f" (e.g. {example.path}){extra}")
     else:
-        print(f"干跑       : 没有落盘；将会写 {result.output_count} 个 "
-              f"{example.name}，例如 {example.path}")
+        print(f"dry run    : nothing written; would write {result.output_count} "
+              f"{example.name}, e.g. {example.path}")
         print("-" * 60)
         sys.stdout.write(example.text)
         print("-" * 60)

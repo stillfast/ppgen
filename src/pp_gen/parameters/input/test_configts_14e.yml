@@ -1,12 +1,12 @@
-# U 14 价电子赝势的**迁移性（δ）测试**：iswitch=2，一次跑 5 个组态，
-# 组态 1 是生成时的组态（5f3 6s2 6p6 6d1 7s2，14 个电子），2..5 是另外四种占据，
-# 报告给出每个组态的 AE/PS 总能量差 ΔE 与 δ = ΔE_PS − ΔE_AE（mRy）。
+# **Transferability (δ) test** for the U 14 valence electron pseudopotential: iswitch=2 runs 5 configurations at once,
+# configuration 1 is the generation configuration (5f3 6s2 6p6 6d1 7s2, 14 electrons) and 2..5 are four other occupations,
+# the report gives the AE/PS total energy difference ΔE and δ = ΔE_PS − ΔE_AE (mRy) for each configuration.
 #
-# 关键点：**每个测试组态里的态都必须在赝势里有对应通道**（这里 6s/6p/6d/7s/5f 五个通道齐）
-# —— 否则 PS 侧是在"别人的通道"里解那个态，得到的是伪误差（例：只有 7S 通道时
-# 测试组态里带 6s2，6S 会差 37 mRy，而那是假象）。
+# Key point: **every state in a test configuration must have a matching channel in the pseudopotential** (here all five channels 6s/6p/6d/7s/5f are present)
+# -- otherwise the PS side solves that state in "someone else's channel" and the resulting error is spurious (for example, with only a 7S channel
+# a test configuration containing 6s2 reports 6S off by 37 mRy, which is an artefact).
 #
-# file_pseudo 指向被测的 UPF（本文件默认指向 v13 流水线生成的那份）。
+# file_pseudo points at the UPF under test.
 input:
   title: 'U 14 valence electrons (5f3 6s2 6p6 6d1 7s2) scalar-relativistic NC, PBE'
   atom: 'U'

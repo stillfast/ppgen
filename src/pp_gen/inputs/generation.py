@@ -1,13 +1,15 @@
-"""``prepare`` 用例：``input.json`` -> ``ld1.x`` 输入文件。
+"""The ``prepare`` use case: ``input.json`` -> ``ld1.x`` input files.
 
-一步做完三件事：
+Three things in one step:
 
-1. 按 ``input.json`` 的 ``workflow`` / ``parameters`` 找到参数 YAML；
-2. 渲染成不含任何注释的 ``ld1.x`` 输入，写到 ``input.json`` 同目录下的
-   ``<元素>.in``（例如 ``U.in``）。**扫描型工作流**（``rc_scan``）会写成一批：
-   ``runs/<轨道>/rc_<值>/U.in``，每个点一份；
-3. 定下本次要用的 ``qe_path``：``input.json`` 里是占位符（如 ``"xx"``）就
-   补上默认 QE 路径并写回 ``input.json``；已经写了真路径就尊重它。
+1. find the parameter YAML files from ``workflow`` / ``parameters`` in ``input.json``;
+2. render them into an ``ld1.x`` input holding no comment at all, written as
+   ``<element>.in`` next to ``input.json`` (for instance ``U.in``). A **scanning
+   workflow** (``rc_scan``) writes a batch instead: ``runs/<orbital>/rc_<value>/U.in``,
+   one file per point;
+3. settle the ``qe_path`` to use for this run: a placeholder in ``input.json``
+   (such as ``"xx"``) is filled in with the default QE path and written back to
+   ``input.json``; a real path written there is respected.
 """
 from __future__ import annotations
 from ..scans import apply as apply
@@ -30,19 +32,21 @@ from ..scans.points import ScanPoint
 
 @dataclass(frozen=True)
 class PrepareTarget:
-    """要写出去的一个 ``.in``（扫描工作流会有很多个）。"""
+    """One ``.in`` to be written out (a scanning workflow has many of them)."""
 
     path: Path
     text: str
     written: bool
     overwrote: bool
-    #: 人读的标签：扫描时是 ``5F rc=1.0`` / ``cfg1 5f3 6s2 …``，单份输出时是空串
+    #: Human-readable label: ``5F rc=1.0`` / ``cfg1 5f3 6s2 ...`` for a scan,
+    #: an empty string for a single output
     label: str = ""
     orbital: str = ""
     rcut: Optional[float] = None
-    #: 扫的是哪一列（单份输入是默认的 rcut 轴）
+    #: Which column is scanned (a single input uses the default rcut axis)
     axis: object = axis.RCUT_AXIS
-    #: ``configts`` 工作流：这个点用的测试组态（别的工况是空串）
+    #: ``configts`` workflow: the test configuration used at this point (empty
+    #: for the other workflows)
     config: str = ""
 
     @property
@@ -52,31 +56,32 @@ class PrepareTarget:
 
 @dataclass(frozen=True)
 class PrepareResult:
-    """``prepare`` 干了什么（供 CLI 打印、供测试断言）。"""
+    """What ``prepare`` did (for the CLI to print and for tests to assert on)."""
 
     input_path: Path
     workflow: str
     parameter_files: Tuple[Path, ...]
     qe_path: str
-    #: qe_path 是从占位符补出来的（而不是 input.json 里本来就写着）
+    #: qe_path was filled in from a placeholder (rather than written in input.json)
     qe_path_filled: bool
-    #: qe_path 真的被写回 input.json 了吗
+    #: whether qe_path was really written back to input.json
     qe_path_written: bool
-    #: 全部要写/已写出去的输入文件
+    #: every input file to write / already written
     targets: Tuple[PrepareTarget, ...]
-    #: 扫描工作流的扫描点（非扫描工作流为空）
+    #: scan points of a scanning workflow (empty for a non-scanning one)
     scan_points: Tuple[ScanPoint, ...] = field(default=())
-    #: 扫描产物的根目录（如 ``<run 目录>/runs``）
+    #: root directory of the scan output (such as ``<run directory>/runs``)
     runs_dir: Optional[Path] = None
-    #: 提供 ``orbitals`` 卡片的那份参数 YAML（``update`` 要写回它）
+    #: the parameter YAML providing the ``orbitals`` cards (``update`` writes back to it)
     cards_file: Optional[Path] = None
-    #: 扫描参数组的内容（``rc_range`` / ``update`` …）
+    #: content of the scan parameter group (``rc_range`` / ``update`` ...)
     scan_sections: Mapping[str, Any] = field(default_factory=dict)
-    #: 合并后的 namelist（``&input`` …）内容 —— ``eminld``/``emaxld`` 在这里
+    #: merged namelist content (``&input`` ...) -- ``eminld``/``emaxld`` live here
     sections: Mapping[str, Any] = field(default_factory=dict)
     warnings: Tuple[str, ...] = field(default=())
 
-    # ---- 单份输出的便捷入口（既有的 ae_radial 流程与测试都按这个用） ----
+    # ---- Convenience entry points for a single output (the ae_radial flow and
+    # ---- the tests use these)
     @property
     def output_path(self) -> Path:
         return self.targets[0].path
@@ -97,7 +102,7 @@ class PrepareResult:
     def overwrote(self) -> bool:
         return self.targets[0].overwrote
 
-    # ---- 批量视图 ----
+    # ---- Batch view ----
     @property
     def scans(self) -> bool:
         return bool(self.scan_points)
@@ -116,7 +121,7 @@ class PrepareResult:
 
     def select(self, only: Optional[Sequence[str]] = None,
                rc: Optional[Sequence[float]] = None) -> Tuple[PrepareTarget, ...]:
-        """按轨道 / rc 值挑出子集（供 ``run`` 只跑一部分点）。"""
+        """Pick a subset by orbital / rc value (so that ``run`` can execute only some points)."""
         chosen = []
         for target in self.targets:
             if only and target.orbital not in only:
@@ -135,18 +140,22 @@ def prepare(input_path: Path, *, outdir: Optional[Path] = None,
             rc: Optional[Sequence[float]] = None,
             ener: Optional[Sequence[float]] = None,
             note_filters: bool = True) -> PrepareResult:
-    """跑一次 prepare。
+    """Run one prepare.
 
-    两个"写不写"的开关是分开的，因为 ``ppgen run`` 需要它们的交叉组合：
-    不重新生成输入（尊重手改版），但 ``qe_path`` 该补还是要补。
+    The two "write or not" switches are separate because ``ppgen run`` needs
+    every combination of them: do not regenerate the inputs (respect a manually
+    edited one) while still filling in ``qe_path``.
 
-    * ``write_output=False``：只算不落盘（``--dry-run``，或 ``run`` 不重生成时）
-    * ``write_back_qe_path=False``：连 ``input.json`` 也不碰（``--dry-run``）
+    * ``write_output=False``: compute only, write nothing (``--dry-run``, or when
+      ``run`` does not regenerate)
+    * ``write_back_qe_path=False``: do not even touch ``input.json`` (``--dry-run``)
 
-    ``only`` / ``rc`` 只对扫描型工作流有意义（对应 CLI 的 ``--only`` / ``--rc``）。
-    ``note_filters=False`` 时不为"过滤后只剩几个点"出提醒 —— ``update: true``
-    的逐轨道串行执行也在内部传 ``only``，那不是用户写的过滤，报出来只会让人
-    以为自己的配置漏了点。
+    ``only`` / ``rc`` only make sense for scanning workflows (the ``--only`` /
+    ``--rc`` of the CLI). With ``note_filters=False`` no warning is emitted for
+    "only a few points survived the filter" -- the per-orbital serial execution
+    of ``update: true`` passes ``only`` internally as well, which is not a filter
+    the user wrote, and reporting it would only suggest that the configuration
+    misses points.
     """
     warnings: List[str] = []
 
@@ -169,7 +178,7 @@ def prepare(input_path: Path, *, outdir: Optional[Path] = None,
     target_dir = (Path(outdir).expanduser().resolve() if outdir is not None
                   else run.directory)
 
-    # qe_path：占位符才补，真路径一律尊重
+    # qe_path: fill in a placeholder, always respect a real path
     qe_path, filled = run_input.resolve_qe_path(run)
     qe_written = False
     if write_back_qe_path and filled:
@@ -178,8 +187,8 @@ def prepare(input_path: Path, *, outdir: Optional[Path] = None,
     ld1 = config.qe_binary(qe_path)
     if not (ld1.is_file() and os.access(ld1, os.X_OK)):
         warnings.append(
-            f"在 qe_path 下没找到可执行的 ld1.x：{ld1}"
-            f"（qe_path 可以写成 QE 的 bin 目录，也可以直接写成 ld1.x 本身）")
+            f"no executable ld1.x found under qe_path: {ld1} "
+            f"(qe_path may be the bin directory of QE, or ld1.x itself)")
 
     targets: List[PrepareTarget] = []
     for relative_dir, point in variants:
@@ -209,7 +218,7 @@ def prepare(input_path: Path, *, outdir: Optional[Path] = None,
             else axis.RCUT_AXIS,
             config=getattr(point, "config", "") if point is not None else ""))
 
-    # 只有真的逐点扫描才有 runs/ 目录（单次运行模式没有点）
+    # only a real per-point scan gets a runs/ directory (a single-run mode has no points)
     any_point = any(point is not None for _, point in variants)
     runs_dir = target_dir / settings.RUNS_DIR if any_point else None
     scan_sections: Mapping[str, Any] = {}
@@ -243,19 +252,21 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
               note_filters: bool = True,
               ener: Optional[Sequence[float]] = None
               ) -> List[Tuple[Optional[Path], Optional[ScanPoint]]]:
-    """单份输出 -> ``[(None, None)]``；扫描 -> 每个扫描点一项。"""
+    """A single output -> ``[(None, None)]``; a scan -> one entry per scan point."""
     if not workflow.scans:
         if only or rc:
             raise InputError(
-                f"工作流 '{workflow.name}' 不扫描，--only / --rc 用不上"
-                f"（只有 {[name for name, w in workflows.WORKFLOWS.items() if w.scans]} "
-                f"这类工作流才有扫描点）")
+                f"workflow '{workflow.name}' does not scan, so --only / --rc do "
+                f"not apply (only workflows such as "
+                f"{[name for name, w in workflows.WORKFLOWS.items() if w.scans]} "
+                f"have scan points)")
         return [(None, None)]
 
     aux = next((item for item in sets if item.group == workflow.scan_group), None)
     if workflow.scans_configts:
-        # 两种模式：参数文件里已经写了多组（nconf>1）就**只跑一次**；否则按
-        # 辅助组里的清单逐组态各跑一次（每个点只换 configts(1)）
+        # two modes: when the parameter file already lists several configurations
+        # (nconf>1) run ld1.x **once**; otherwise run it once per configuration
+        # taken from the auxiliary group (only configts(1) changes at each point)
         test_block = sections.get("test")
         nconf = (test_block.get("nconf") if isinstance(test_block, Mapping)
                  else None)
@@ -263,29 +274,34 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
             listed = [str(test_block.get(f"configts({i})", "") or "").strip()
                       for i in range(1, nconf + 1)]
             warnings.append(
-                f"参数文件里已经写了 {nconf} 个测试组态（nconf = {nconf}）"
-                f"—— 只跑一次 ld1.x，不再逐组态生成；QE 会在 ld1.test 里"
-                f"逐组态打印 dEtot_ae/dEtot_ps/Delta E")
+                f"the parameter file already lists {nconf} test configurations "
+                f"(nconf = {nconf}) -- ld1.x runs once and no per-configuration "
+                f"input is generated; QE prints dEtot_ae/dEtot_ps/Delta E per "
+                f"configuration in ld1.test")
             if any(not item for item in listed):
                 warnings.append(
-                    f"test 里 configts(1..{nconf}) 没写全：{listed}")
+                    f"not every configts(1..{nconf}) is written in test: {listed}")
             return [(None, None)]
         if aux is None:
             raise InputError(
-                f"工作流 '{workflow.name}' 既没在参数文件里写多组态"
-                f"（test.nconf > 1 + configts(1..N)），也没有给辅助参数组 "
-                f"'{workflow.scan_group}' —— 两种模式至少要有一个")
-        # 逐组态：每个 configts 一项，只改 &test 的 configts(1)
+                f"workflow '{workflow.name}' neither lists several configurations "
+                f"in the parameter file (test.nconf > 1 + configts(1..N)) nor "
+                f"provides the auxiliary parameter group "
+                f"'{workflow.scan_group}' -- at least one of the two modes is needed")
+        # per configuration: one entry for each configts, changing only
+        # configts(1) of &test
         ignored = sorted(set(aux.sections)
                          - {settings.CONFIGTS_KEY, settings.REFERENCE_KEY})
         if ignored:
             warnings.append(
-                f"组态参数（{aux.path}）里的 {ignored} 不再使用，已被忽略")
+                f"configuration parameter ({aux.path}): {ignored} is no longer "
+                f"used and has been ignored")
         warnings += scan.check_config_setup(
             sections, multiple=len(aux.sections[settings.CONFIGTS_KEY]) > 1)
-        # 被测的那份 PP 与其它设置都写在参数文件的 &test / &input 里，
-        # 这里只管"测哪些组态"（相对路径按 run 目录解析，因为 ld1.x 是在
-        # 每个点的目录里跑的）
+        # the PP under test and every other setting live in the &test / &input of
+        # the parameter files; this only decides which configurations to test
+        # (relative paths resolve against the run directory, because ld1.x runs
+        # inside the directory of each point)
         pseudo = ""
         test_block = sections.get("test")
         if isinstance(test_block, Mapping):
@@ -296,86 +312,97 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
                     path = Path(run_dir) / path
                 if not path.is_file():
                     warnings.append(
-                        f"参数文件里的 file_pseudo 找不到：{path}")
+                        f"file_pseudo from the parameter files is not found: {path}")
         points = scan.config_points(aux.sections[settings.CONFIGTS_KEY],
                                     only=only, rc=rc, file_pseudo=pseudo)
         if only and note_filters:
-            warnings.append(f"按 --only 过滤后只剩 {len(points)} 个组态")
+            warnings.append(f"--only filtering left {len(points)} configurations")
         zval = scan.config_electrons(str(sections.get("config", "")))
-        if zval:                                        # 与生成组态比一比
+        if zval:                                        # compare with the generating configuration
             odd = [point for point in points if point.n_electrons != zval]
             if odd:
                 warnings.append(
-                    "这些组态的价电子数与生成组态（config = "
-                    f"{sections.get('config')!r}，{zval} 个）不同："
-                    + "、".join(f"{point.config}（{point.n_electrons}）"
+                    "these configurations have a different valence electron count "
+                    "than the generating configuration (config = "
+                    f"{sections.get('config')!r}, {zval} electrons): "
+                    + ", ".join(f"{point.config} ({point.n_electrons})"
                                 for point in odd)
-                    + " —— EA/PS 的能量差与能级都不可直接与其它组态比较")
+                    + " -- their AE/PS energy differences and levels cannot be "
+                      "compared directly with the other configurations")
         return [(point.relative_dir, point) for point in points]
     if aux is None:                                     # pragma: no cover
-        raise InputError(f"工作流 '{workflow.name}' 缺少扫描参数组 "
-                         f"'{workflow.scan_group}'")
+        raise InputError(f"workflow '{workflow.name}' is missing the scan "
+                         f"parameter group '{workflow.scan_group}'")
     if workflow.scan_kind in axis.NAMELIST_SCANS:
-        # namelist 里一个标量：rcloc（&inputp）/ rlderiv（&input）
+        # one scalar inside a namelist: rcloc (&inputp) / rlderiv (&input)
         spec = axis.namelist_scan(workflow.scan_kind)
         key, section = spec["key"], spec["section"]
         written = [name for name in spec["range_keys"] if name in aux.sections]
         if not written:
             raise InputError(
-                f"扫描参数（{aux.path}）里没有范围：写 "
-                f"{spec['range_keys'][0]}: [起点, 终点, 步长]（与 rc_range 一样；"
-                f"两端都为正、又把 {key} 现在的值包在里面时按**绝对值**取，"
-                f"否则按相对它的偏移）")
+                f"the scan parameters ({aux.path}) have no range: write "
+                f"{spec['range_keys'][0]}: [start, end, step] (as with rc_range; "
+                f"when both ends are positive and bracket the current value of "
+                f"{key} the range is taken as **absolute**, otherwise as an "
+                f"offset from that value)")
         range_key = written[0]
         ignored = sorted(set(aux.sections) - {range_key, settings.UPDATE_KEY})
         if ignored:
             warnings.append(
-                f"扫描参数（{aux.path}）里的 {ignored} 不再使用，已被忽略")
+                f"scan parameter ({aux.path}): {ignored} is no longer used and "
+                f"has been ignored")
         center = scan.namelist_center(sections, section=section, key=key)
         points = scan.namelist_points(center, aux.sections[range_key],
                                       section=section, key=key,
                                       axis=spec["axis"], values=rc)
         if rc and note_filters:
-            warnings.append(f"按 --rc 过滤后只剩 {len(points)} 个扫描点")
+            warnings.append(f"--rc filtering left {len(points)} scan points")
         return [(point.relative_dir, point) for point in points]
     if workflow.scan_kind == "ener":
-        # 能量扫描：扫的是 occ=0 的额外投影算子卡片第 5 列的 ener
+        # energy scan: it walks ener, column 5 of the extra projector cards with occ=0
         if settings.ENERGY_RANGE_KEY not in aux.sections:
             raise InputError(
-                f"扫描参数（{aux.path}）里没有 {settings.ENERGY_RANGE_KEY} —— "
-                f"它要写成 [起点, 终点, 步长]，例如 [-0.2, 0.2, 0.05]"
-                f"（**相对每张 occ=0 卡片现在的 ener 的偏移**，与 rc_range 一样）")
+                f"the scan parameters ({aux.path}) have no "
+                f"{settings.ENERGY_RANGE_KEY} -- it must be written as "
+                f"[start, end, step], for instance [-0.2, 0.2, 0.05] "
+                f"(**an offset from the current ener of each occ=0 card**, as with "
+                f"rc_range)")
         ignored = sorted(set(aux.sections)
                          - {settings.ENERGY_RANGE_KEY, settings.UPDATE_KEY})
         if ignored:
             warnings.append(
-                f"扫描参数（{aux.path}）里的 {ignored} 不再使用，已被忽略")
+                f"scan parameter ({aux.path}): {ignored} is no longer used and "
+                f"has been ignored")
         scan.check_card_count(sections, warnings)
         try:
             centers = scan.energy_centers(
                 sections.get("orbitals", sections.get("cards")),
                 warnings=warnings)
         except InputError as exc:
-            # 挑不出可扫的卡片就直接报错，此时 warnings 还没机会打出来 ——
-            # 把"张数对不上"这类**另一处**毛病一并写进这条报错，免得改两轮
+            # no scannable card at all is an error here, and the warnings have no
+            # chance to be printed before it -- so a problem of **another** kind,
+            # such as a card count mismatch, is folded into this error to save a
+            # second round of edits
             extra: List[str] = []
             scan.check_card_count(sections, extra)
-            raise InputError(f"{exc}；另外：{'；'.join(extra)}") from None \
+            raise InputError(f"{exc}; also: {'; '.join(extra)}") from None \
                 if extra else exc
         points = scan.energy_points(centers, aux.sections[settings.ENERGY_RANGE_KEY],
                                     only=only, ener=ener, warnings=warnings)
         if (only or ener) and note_filters:
-            warnings.append(f"按 --only/--ener 过滤后只剩 {len(points)} 个扫描点")
+            warnings.append(f"--only/--ener filtering left {len(points)} scan points")
         return [(point.relative_dir, point) for point in points]
     if "rc_range" not in aux.sections:
         raise InputError(
-            f"扫描参数（{aux.path}）里没有 rc_range —— 它要写成 "
-            f"[起点, 终点, 步长]，例如 [-0.5, 0.5, 0.1]")
+            f"the scan parameters ({aux.path}) have no rc_range -- it must be "
+            f"written as [start, end, step], for instance [-0.5, 0.5, 0.1]")
     ignored = sorted(set(aux.sections) - {"rc_range", settings.UPDATE_KEY})
     if ignored:
         warnings.append(
-            f"扫描参数（{aux.path}）里的 {ignored} 不再使用，已被忽略"
-            + ("；扫描中心现在取 input 参数里各轨道的 rcut，rc_default 可以删掉"
+            f"scan parameter ({aux.path}): {ignored} is no longer used and has "
+            f"been ignored"
+            + ("; the scan centre now comes from the rcut of each orbital in the "
+               "input parameters, so rc_default can be deleted"
                if "rc_default" in ignored else ""))
     scan.check_card_count(sections, warnings)
     centers = scan.centers_from_cards(sections.get("orbitals",
@@ -383,12 +410,12 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
                                       warnings=warnings)
     points = scan.points(centers, aux.sections["rc_range"], only=only, rc=rc)
     if (only or rc) and note_filters:
-        warnings.append(f"按 --only/--rc 过滤后只剩 {len(points)} 个扫描点")
+        warnings.append(f"--only/--rc filtering left {len(points)} scan points")
     return [(point.relative_dir, point) for point in points]
 
 
 def _write(path: Path, text: str) -> Tuple[bool, bool]:
-    """写一个输入文件；返回 ``(是否写了, 是否覆盖了内容不同的旧文件)``。"""
+    """Write one input file; returns ``(was written, overwrote a file with different content)``."""
     previous = None
     if path.is_file():
         try:
@@ -400,5 +427,5 @@ def _write(path: Path, text: str) -> Tuple[bool, bool]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     except OSError as exc:
-        raise InputError(f"写不了 {path}：{exc}") from exc
+        raise InputError(f"cannot write {path}: {exc}") from exc
     return True, overwrote

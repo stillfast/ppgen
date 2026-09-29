@@ -19,7 +19,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from .metrics import ConfigRow, METRIC_NAMES, OrbitalReport, POLE_FALLBACK, PointMetrics, _INF, _metric_of, pole_stats
 
 def _fmt_ry(value: Optional[float]) -> str:
-    """总能量 / 能量差：定点 6 位小数（``.5g`` 会把 -55958.13 打成 -55958）。"""
+    """Total energies / energy differences: six decimals fixed (``.5g`` would print -55958.13 as -55958)."""
     return "—" if value is None else f"{value:.6f}"
 
 
@@ -33,25 +33,26 @@ def render_configts_markdown(*, output_json: Path, rows: Sequence[ConfigRow],
                              reference: str, reference_source: str,
                              generated: Mapping[str, object],
                              warnings: Sequence[str]) -> str:
-    """``configts`` 报告的正文：能级表 + 迁移性表。"""
+    """Body of the ``configts`` report: the level table plus the transferability table."""
     lines: List[str] = []
-    lines.append("# 测试组态报告（迁移性）")
+    lines.append("# Test configuration report (transferability)")
     lines.append("")
-    lines.append(f"- 运行记录：`{output_json}`")
-    lines.append(f"- 生成时间：{datetime.now().astimezone().isoformat(timespec='seconds')}")
-    lines.append(f"- 参考组态：`{reference}`（{reference_source}）—— "
-                 f"ΔE_x = E_x(该组态) − E_x(参考)，与 QE 的 `dEtot` 同号约定")
-    lines.append(f"- 汇总：`{generated.get('run_dir', '')}`"
-                 f"，qe_path `{generated.get('qe_path', '')}`")
+    lines.append(f"- Run record: `{output_json}`")
+    lines.append(f"- Generated: {datetime.now().astimezone().isoformat(timespec='seconds')}")
+    lines.append(f"- Reference configuration: `{reference}` ({reference_source}) -- "
+                 f"ΔE_x = E_x(this configuration) - E_x(reference), the same sign "
+                 f"convention as `dEtot` of QE")
+    lines.append(f"- Summary: `{generated.get('run_dir', '')}`"
+                 f", qe_path `{generated.get('qe_path', '')}`")
     lines.append("")
 
     ok = [row for row in rows if row.ok]
-    lines.append(f"测试组态：{len(ok)}/{len(rows)} 成功")
+    lines.append(f"Test configurations: {len(ok)}/{len(rows)} succeeded")
     lines.append("")
 
-    lines.append("## 迁移性：总能量差与 δ")
+    lines.append("## Transferability: total energy differences and δ")
     lines.append("")
-    lines.append("| # | 组态 | 价电子数 | E_AE (Ry) | E_PS (Ry) | ΔE_AE (Ry) "
+    lines.append("| # | configuration | valence electrons | E_AE (Ry) | E_PS (Ry) | ΔE_AE (Ry) "
                  "| ΔE_PS (Ry) | δ (mRy) |")
     lines.append("|---:|---|---:|---:|---:|---:|---:|---:|")
     for row in rows:
@@ -64,22 +65,23 @@ def render_configts_markdown(*, output_json: Path, rows: Sequence[ConfigRow],
                            (row.etot, row.etotps, row.d_ae, row.d_ps))
         delta = ("0" if is_ref else
                  (f"{row.delta * 1000:.3f}" if row.delta is not None else "—"))
-        mark = " ←参考" if is_ref else ""
+        mark = " ←reference" if is_ref else ""
         lines.append(f"| {row.index} | `{row.config}`{mark} | {row.n_electrons} "
                      f"| {cells} | {delta} |")
     lines.append("")
-    lines.append("δ = ΔE_AE − ΔE_PS，越接近 0 说明这个 PP 描述的相对能量越准 "
-                 "（这就是论文表 5 那个量）。")
+    lines.append("δ = ΔE_AE - ΔE_PS; the closer to 0, the more accurately this PP "
+                 "describes relative energies (this is the quantity of Table 5 of "
+                 "the paper).")
     lines.append("")
 
-    lines.append("## 逐组态的 AE / PS 能级")
+    lines.append("## AE / PS levels per configuration")
     lines.append("")
     for row in rows:
         if not row.ok or not row.states:
             continue
         lines.append(f"### [{row.index}] `{row.config}`")
         lines.append("")
-        lines.append("| 态 | 占据 | e AE (Ry) | e PS (Ry) | ΔE (mRy) |")
+        lines.append("| state | occ | e AE (Ry) | e PS (Ry) | ΔE (mRy) |")
         lines.append("|---|---:|---:|---:|---:|")
         for state in row.states:
             lines.append(f"| {state['label']} | {state['occ']:.2f} "
@@ -89,13 +91,13 @@ def render_configts_markdown(*, output_json: Path, rows: Sequence[ConfigRow],
 
     bad = [row for row in rows if not row.ok]
     if bad:
-        lines.append("## 不可用的组态")
+        lines.append("## Unusable configurations")
         lines.append("")
         for row in bad:
-            lines.append(f"- `{row.config}`（{row.directory.name}）：{row.skipped}")
+            lines.append(f"- `{row.config}` ({row.directory.name}): {row.skipped}")
         lines.append("")
     if warnings:
-        lines.append("## 提醒")
+        lines.append("## Warnings")
         lines.append("")
         for text in warnings:
             lines.append(f"- {text}")
@@ -108,84 +110,86 @@ def render_markdown(*, output_json: Path, plot_json: Path, spec: PlotSpec,
                     skipped: Sequence[Tuple[Path, str]],
                     warnings: Sequence[str],
                     decision_file: Optional[Path] = None) -> str:
-    """生成 ``report.md`` 的正文。"""
+    """Produce the body of ``report.md``."""
     metric_name = METRIC_NAMES[metric]
     fallback_name = METRIC_NAMES[POLE_FALLBACK]
     by_pole = metric == "pole"
     axis = orbitals[0].axis if orbitals else scan_axis.RCUT_AXIS
-    scope_text = ("被扫轨道对应的通道" if scope == "scanned" else "所有通道池化")
+    scope_text = ("channel of the scanned orbital" if scope == "scanned" else "all channels pooled")
     if axis.column is None:
-        scope_text = f"所有通道池化（{axis.key} 影响整份赝势）"
+        scope_text = f"all channels pooled ({axis.key} affects the whole pseudopotential)"
     lines: List[str] = []
-    lines.append(f"# {axis.key} 扫描报告"
-                 if axis is not scan_axis.RCUT_AXIS else "# rc_scan 报告")
+    lines.append(f"# {axis.key} scan report"
+                 if axis is not scan_axis.RCUT_AXIS else "# rc_scan report")
     lines.append("")
-    lines.append(f"- 运行记录：`{output_json}`")
-    lines.append(f"- 分析模板：`{plot_json}`")
-    lines.append(f"- 生成时间：{datetime.now().astimezone().isoformat(timespec='seconds')}")
+    lines.append(f"- Run record: `{output_json}`")
+    lines.append(f"- Analysis template: `{plot_json}`")
+    lines.append(f"- Generated: {datetime.now().astimezone().isoformat(timespec='seconds')}")
     window = spec.figure.xlim
     if window is not None:
-        lines.append(f"- 能量窗口：{window[0]:g} … {window[1]:g} Ry（`plot.json` 的 `xlim`）")
-    lines.append(f"- 极点容差：{spec.analysis.pole_threshold:g} Ry"
-                 f"（`analysis.pole_threshold`）")
+        lines.append(f"- Energy window: {window[0]:g} … {window[1]:g} Ry (`xlim` of `plot.json`)")
+    lines.append(f"- Pole tolerance: {spec.analysis.pole_threshold:g} Ry"
+                 f" (`analysis.pole_threshold`)")
     lines.append(
-        "- 极点位置：按能量网格（`&input` 的 `deld`）**插值**定位；判定「两个极点"
-        "算同一个」用 `极点容差 + 网格步长`（0.02 + 0.02 = 0.04 Ry）—— 极点落在"
-        "哪一格之间只能插值，分辨率就是那一格，所以判据要留一格。`ΔE` 显示的是"
-        "插值后的真实差值（不再被量化成 0.02 的整数倍）")
+        "- Pole positions: located by **interpolation** on the energy grid (`deld` of "
+        "`&input`); two poles count as the same when they agree within `pole tolerance "
+        "+ grid step` (0.02 + 0.02 = 0.04 Ry) -- a pole falls between two grid "
+        "points, so interpolation is the only option and the resolution is that one "
+        "cell, which is why the criterion keeps one cell of slack. `ΔE` shows the true "
+        "interpolated difference (not quantised to a multiple of 0.02)")
     if by_pole:
         lines.append(
-            f"- 排序依据：**极点重合**（`--pole`）—— 先看各通道的极点**是否重合**"
-            f"（`poles.coincide`），再比**极点 ΔE 合计**"
-            f"（`poles.pairs[].delta` 之和，越小越好），ΔE 一样才比"
-            f" **`|ΔL|` 的{fallback_name}**；范围：**{scope_text}**"
-            f"（`--scope {scope}`）")
+            f"- Ranking: **pole coincidence** (`--pole`) -- first whether the poles of "
+            f"every channel **coincide** (`poles.coincide`), then the **pole ΔE sum** "
+            f"(the sum of `poles.pairs[].delta`, smaller is better), and only when the "
+            f"ΔE ties the **{fallback_name} of `|dL|`**; scope: **{scope_text}**"
+            f" (`--scope {scope}`)")
     else:
-        lines.append(f"- 排序统计量：**`|ΔL|` 的{metric_name}**"
-                     f"（`--{metric}`），范围：**{scope_text}**（`--scope {scope}`）")
-    lines.append("- 比较的文件："
-                 + "、".join(f"`{item.name}`" for item in spec.data.wfcs)
-                 + f"（标签 {list(spec.data.labels)}）")
+        lines.append(f"- Ranking statistic: **{metric_name} of `|dL|`**"
+                     f" (`--{metric}`), scope: **{scope_text}** (`--scope {scope}`)")
+    lines.append("- Compared files: "
+                 + ", ".join(f"`{item.name}`" for item in spec.data.wfcs)
+                 + f" (labels {list(spec.data.labels)})")
     if decision_file is not None:
-        lines.append(f"- 选择依据图：`{decision_file.name}`"
-                     f"（{_decision_note(metric, by_pole, axis)}）")
+        lines.append(f"- Decision figure: `{decision_file.name}`"
+                     f" ({_decision_note(metric, by_pole, axis)})")
     lines.append("")
 
     total = sum(len(item.points) for item in orbitals)
     usable = sum(len(item.usable) for item in orbitals)
-    lines.append(f"扫描点：{usable}/{total} 可用"
-                 + (f"；{total - usable} 个不可用（见每节末尾）" if total > usable else ""))
+    lines.append(f"Scan points: {usable}/{total} usable"
+                 + (f"; {total - usable} unusable (see the end of each section)" if total > usable else ""))
     failed_draw = [point for item in orbitals for point in item.points
                    if point.render_error]
     if failed_draw:
         lines.append("")
-        lines.append("画图失败的点：")
+        lines.append("Points that failed to plot:")
         for point in failed_draw:
-            lines.append(f"- `{_short(point.directory)}`：{point.render_error}")
+            lines.append(f"- `{_short(point.directory)}`: {point.render_error}")
     lines.append("")
 
     if decision_file is not None:
-        lines.append(f"![为什么选这个 {axis.name}]({decision_file.name})")
+        lines.append(f"![why this {axis.name}]({decision_file.name})")
         lines.append("")
     if by_pole:
-        lines.append(f"## 每组极点最重合的 {axis.key}")
+        lines.append(f"## {axis.key} with the most coincident poles per group")
         lines.append("")
-        lines.append(f"| 轨道 | 通道 | 最佳 {axis.heading()} | 极点重合（{scope_text}）"
-                     f" | 极点 ΔE 合计 (Ry) | 配不上的对 | |ΔL| {fallback_name} "
-                     f"| 池化{fallback_name} | 目录 |")
+        lines.append(f"| orbital | channel | best {axis.heading()} | pole coincidence ({scope_text})"
+                     f" | pole ΔE sum (Ry) | unmatched | |dL| {fallback_name} "
+                     f"| pooled {fallback_name} | directory |")
         lines.append("|---|---|---|---|---|---|---|---|---|")
     else:
-        lines.append(f"## 每组的 |ΔL| {metric_name} 最小的 {axis.key}")
+        lines.append(f"## {axis.key} with the smallest |dL| {metric_name} per group")
         lines.append("")
-        lines.append(f"| 轨道 | 通道 | 最佳 {axis.heading()} | |ΔL| {metric_name}（{scope_text}） "
-                     f"| 池化{metric_name} | 目录 |")
+        lines.append(f"| orbital | channel | best {axis.heading()} | |dL| {metric_name} ({scope_text}) "
+                     f"| pooled {metric_name} | directory |")
         lines.append("|---|---|---|---|---|---|")
     for item in orbitals:
         if item.best is None:
             empty = " | —" * (8 if by_pole else 5)
             lines.append(f"| {item.orbital} | "
                          f"l={_channel_name(item.channel)} |{empty}"
-                         f" | 没有可用点 |")
+                         f" | no usable point |")
             continue
         best = item.best
         if by_pole:
@@ -205,33 +209,33 @@ def render_markdown(*, output_json: Path, plot_json: Path, spec: PlotSpec,
             f"| {_fmt(best.pooled)} | `{best.directory.name}` |")
     lines.append("")
 
-    lines.append("## 逐点明细")
+    lines.append("## Per-point detail")
     lines.append("")
     for item in orbitals:
         lines.append(f"### {item.orbital}"
-                     + (f"（扫的是 l={item.channel}）" if item.channel is not None
-                        else "（全部通道）"))
+                     + (f" (scanned channel l={item.channel})" if item.channel is not None
+                        else " (all channels)"))
         lines.append("")
         channels = sorted({l for point in item.points for l in point.per_channel})
         if by_pole:
-            head = (f"| {axis.heading()} | 状态 | 极点重合 | 极点 ΔE 合计 | 配不上的对 |"
-                    + "".join(f" l={l} 极点 ΔE |" for l in channels)
-                    + f" |ΔL| {fallback_name} | 池化{fallback_name} |")
+            head = (f"| {axis.heading()} | status | poles coincide | pole ΔE sum | unmatched |"
+                    + "".join(f" l={l} pole ΔE |" for l in channels)
+                    + f" |dL| {fallback_name} | pooled {fallback_name} |")
             ranked = next((point.pole_scope for point in item.points
                            if point.pole_scope), ())
             if ranked:
                 lines.append(
-                    "排序看 " + "、".join(f"l={l}" for l in ranked)
-                    + f" 的极点（`--scope {scope}`）；`l=N 极点 ΔE` 列给出"
-                    "各通道的值（**加粗＝未重合**，`配不上`＝窗口内没有 AE "
-                    "极点可配，记 ∞）。")
+                    "Ranked on the poles of " + ", ".join(f"l={l}" for l in ranked)
+                    + f" (`--scope {scope}`); the `l=N pole ΔE` column gives the "
+                    "value of every channel (**bold = not coincident**, `unmatched` = "
+                    "no AE pole inside the window to match, recorded as ∞).")
                 lines.append("")
             lines.append(head)
             lines.append("|" + "---|" * (len(channels) + 7))
         else:
-            head = f"| {axis.heading()} | 状态 |"
+            head = f"| {axis.heading()} | status |"
             head += "".join(f" l={l} {metric_name} |" for l in channels)
-            head += f" 池化{metric_name} |"
+            head += f" pooled {metric_name} |"
             lines.append(head)
             lines.append("|" + "---|" * (len(channels) + 3))
         best = item.best
@@ -245,8 +249,9 @@ def render_markdown(*, output_json: Path, plot_json: Path, spec: PlotSpec,
                              + " — |" * width)
                 continue
             if by_pole:
-                # 逐通道列给出**所有**通道的极点 ΔE（排序只看 scope 里那几个，
-                # 但一眼看出"是哪个通道对不上"更有用）
+                # the per-channel columns give the pole ΔE of **every** channel
+                # (the ranking only looks at those inside the scope, but seeing at
+                # a glance which channel fails to match is more useful)
                 per_channel = pole_stats(point.features, channels)["channels"]
                 cells = "".join(f" {_pole_cell(per_channel.get(l))} |"
                                 for l in channels)
@@ -264,72 +269,73 @@ def render_markdown(*, output_json: Path, plot_json: Path, spec: PlotSpec,
         if item.best is not None:
             if by_pole:
                 lines.append(
-                    f"**最佳：{item.axis.label(item.best.value)}**"
-                    f"（极点{_coincide_text(item.best.pole_coincide)}，"
-                    f"ΔE 合计 {format_pole_delta(item.best.pole_delta)}，"
-                    f"|ΔL| {fallback_name} "
-                    f"{_fmt(_metric_of(item.best, POLE_FALLBACK, scope))}，"
-                    f"目录 `{item.best.directory}`）")
+                    f"**Best: {item.axis.label(item.best.value)}**"
+                    f" (poles coincide: {_coincide_text(item.best.pole_coincide)}, "
+                    f"ΔE sum: {format_pole_delta(item.best.pole_delta)}, "
+                    f"|dL| {fallback_name} "
+                    f"{_fmt(_metric_of(item.best, POLE_FALLBACK, scope))}, "
+                    f"directory `{item.best.directory}`)")
             else:
-                lines.append(f"**最佳：{item.axis.label(item.best.value)}**"
-                             f"（{metric_name} {_fmt(_metric_of(item.best, metric, scope))}，"
-                             f"目录 `{item.best.directory}`）")
+                lines.append(f"**Best: {item.axis.label(item.best.value)}**"
+                             f" ({metric_name} {_fmt(_metric_of(item.best, metric, scope))}, "
+                             f"directory `{item.best.directory}`)")
         lines.append("")
         bad = [point for point in item.points if not point.ok]
         if bad:
-            lines.append("不可用的点：")
+            lines.append("Unusable points:")
             for point in bad:
-                lines.append(f"- {item.axis.label(point.value)}：{point.skipped}"
+                lines.append(f"- {item.axis.label(point.value)}: {point.skipped}"
                              if point.value is not None
-                             else f"- {point.label}：{point.skipped}")
+                             else f"- {point.label}: {point.skipped}")
             lines.append("")
 
-    lines.append("## 最佳参数下的极点与零点")
+    lines.append("## Poles and zeros at the best parameter")
     lines.append("")
-    lines.append(f"对每组**上表选出的那个 {axis.key}**，逐通道列出极点"
-                 "（`L` 发散处）与零点"
-                 "（`L=0`，对数纵轴上的下尖）的**极值位置**与**是否重合**。"
-                 "「重合」= AE 与 PS 的个数相同、且每个都能在 "
-                 f"{spec.analysis.pole_threshold:g} Ry 内配上。")
+    lines.append(f"For the **{axis.key} selected in the table above** of each group, "
+                 "list the **extreme positions** of the poles (`L` diverges there) and "
+                 "of the zeros (`L=0`, the downward spike on the logarithmic axis) per "
+                 "channel, together with **whether they coincide**. `Coincide` means AE "
+                 "and PS have the same count and every one matches within "
+                 f"{spec.analysis.pole_threshold:g} Ry.")
     lines.append("")
     for item in orbitals:
         if item.best is None:
             continue
-        lines.append(f"### {item.orbital}，{item.axis.label(item.best.value)}")
+        lines.append(f"### {item.orbital}, {item.axis.label(item.best.value)}")
         lines.append("")
-        lines.append("| 通道 | 极点 AE 极值 (Ry) | 极点 PS 极值 (Ry) | 极点重合 | "
-                     "零点 AE 极值 (Ry) | 零点 PS 极值 (Ry) | 零点重合 |")
+        lines.append("| channel | pole AE extrema (Ry) | pole PS extrema (Ry) | poles coincide | "
+                     "zero AE extrema (Ry) | zero PS extrema (Ry) | zeros coincide |")
         lines.append("|---|---|---|---|---|---|---|")
         for l in sorted(item.best.features):
             block = item.best.features[l]
             poles, zeros = block["poles"], block["zeros"]
             lines.append(
                 f"| l={l} | {_extrema(poles['ae'])} | {_extrema(poles['ps'])} "
-                f"| {'是' if poles['coincide'] else '**否**'} "
+                f"| {'yes' if poles['coincide'] else '**no**'} "
                 f"| {_extrema(zeros['ae'])} | {_extrema(zeros['ps'])} "
-                f"| {'是' if zeros['coincide'] else '**否**'} |")
+                f"| {'yes' if zeros['coincide'] else '**no**'} |")
         lines.append("")
-        lines.append("逐对差值（PS 极点 ↔ 最近的 AE 极点）：")
+        lines.append("Pairwise differences (PS pole ↔ nearest AE pole):")
         for l in sorted(item.best.features):
             pairs = item.best.features[l]["poles"]["pairs"]
             if not pairs:
                 continue
-            text = "、".join(
+            text = ", ".join(
                 f"{item2['ps']:+.3f}↔"
-                + (f"{item2['ae']:+.3f}" if item2["ae"] is not None else "无 AE 极点")
-                + (f"（Δ={item2['delta']:.3f}）" if item2["delta"] is not None else "")
+                + (f"{item2['ae']:+.3f}" if item2["ae"] is not None else "no AE pole")
+                + (f" (Δ={item2['delta']:.3f})" if item2["delta"] is not None else "")
                 for item2 in pairs)
-            lines.append(f"- l={l}：{text}")
+            lines.append(f"- l={l}: {text}")
         lines.append("")
 
     if skipped:
-        lines.append("## 跳过的目录")
+        lines.append("## Skipped directories")
         lines.append("")
         for directory, reason in skipped:
-            lines.append(f"- `{directory}`：{reason}")
+            lines.append(f"- `{directory}`: {reason}")
         lines.append("")
     if warnings:
-        lines.append("## 提醒")
+        lines.append("## Warnings")
         lines.append("")
         for text in warnings:
             lines.append(f"- {text}")
@@ -338,73 +344,77 @@ def render_markdown(*, output_json: Path, plot_json: Path, spec: PlotSpec,
 
 
 def _channel_name(channel: Optional[int]) -> str:
-    """表格里那一列：认不出单一通道（``rcloc`` 这种影响整份赝势的量）就写"全部"。"""
-    return "全部" if channel is None else str(channel)
+    """The column in the tables: when no single channel can be read (a quantity such as ``rcloc`` that affects the whole pseudopotential) it says `all`."""
+    return "all" if channel is None else str(channel)
 
 
 def _decision_note(metric: str, by_pole: bool,
                    axis: object = scan_axis.RCUT_AXIS) -> str:
-    """描述"选择依据图"的两个轴（报告正文里那句话）。"""
+    """Describe the two axes of the decision figure (the sentence in the report body)."""
     key = getattr(axis, "key", "rcut")
     if by_pole:
-        return (f"横轴 `{key}`，纵轴**极点 ΔE 合计**（虚线是 `pole_threshold`，"
-                "实心＝极点重合），右侧淡灰是 `|ΔL|` 中位数 —— 也就是 ΔE 一样时"
-                f"的次级判据；星号是选中的那个 `{key}`")
-    return (f"横轴 `{key}`，纵轴 **`|ΔL|` 的{METRIC_NAMES[metric]}**，"
-            f"右侧淡灰是极点 ΔE（实心＝极点重合）；星号是选中的那个 `{key}`")
+        return (f"x axis `{key}`, y axis **pole ΔE sum** (the dashed line is "
+                "`pole_threshold`, a filled marker means the poles coincide); the pale "
+                "grey curve on the right is the `|dL|` median -- the secondary "
+                f"criterion when the ΔE ties; the star marks the selected `{key}`")
+    return (f"x axis `{key}`, y axis **{METRIC_NAMES[metric]} of `|dL|`**, "
+            f"the pale grey curve on the right is the pole ΔE (a filled marker means "
+            f"the poles coincide); the star marks the selected `{key}`")
 
 
 def _coincide_text(value: Optional[bool]) -> str:
-    """极点是否重合：是 / **否** / —（没算出来）。"""
+    """Whether the poles coincide: yes / **no** / — (not computed)."""
     if value is None:
         return "—"
-    return "是" if value else "**否**"
+    return "yes" if value else "**no**"
 
 
 def format_pole_delta(value: Optional[float]) -> str:
-    """极点 ΔE 合计；``inf`` 表示有配不上的对（没有 ΔE 可比）。"""
+    """Pole ΔE sum; ``inf`` means some pairs are unmatched (no ΔE to compare)."""
     if value is None:
         return "—"
     if value == _INF:
-        return "**∞**（有配不上的对）"
+        return "**∞** (unmatched pairs)"
     return f"{value:.3g}"
 
 
 def _pole_cell(info: Optional[Mapping[str, object]]) -> str:
-    """逐通道的极点 ΔE 单元格：不重合的加粗，配不上的写成"配不上"。"""
+    """The per-channel pole ΔE cell: a non-coincident value is bold, an unmatched one reads `unmatched`."""
     if info is None:
         return "—"
     value = info.get("delta")
     if value is None:
         return "—"
     if float(value) == _INF:
-        return "**配不上**"
+        return "**unmatched**"
     text = f"{float(value):.3g}"
     return text if info.get("coincide") else f"**{text}**"
 
 
 def _short(path: Path) -> str:
-    """路径里太长的前缀用 … 省掉（报告里好读）。"""
+    """Shorten an overly long path prefix with ... (easier to read in the report)."""
     text = str(path)
     parts = text.split("/")
     return text if len(parts) <= 4 else ".../" + "/".join(parts[-4:])
 
 
 def _extrema(block: Mapping[str, object]) -> str:
-    """``min`` / ``max`` 两个端点加上个数。"""
+    """The two endpoints ``min`` / ``max`` plus the count."""
     if not block["energies"]:
         return "—"
     energies = ", ".join(f"{v:+.3f}" for v in block["energies"])
     return (f"min {block['min']:+.3f} / max {block['max']:+.3f}"
-            f"（n={block['n']}：{energies}）")
+            f" (n={block['n']}: {energies})")
 
 
 def render_point(point: PointMetrics, *, template: PlotSpec, write: bool,
                  warnings: List[str]) -> PointMetrics:
-    """给一个算成功的扫描点画图并写 ``parser.json``（失败只记提醒，不中断）。
+    """Plot one successfully computed scan point and write its ``parser.json`` (a failure is only recorded as a warning, it does not abort).
 
-    做法：拿分析模板复制一份 ``PlotSpec``，只把 ``data.wfcs`` 换成**这个目录里**
-    的同名文件 —— 于是窗口、极点容差、轴设定、统计开关全都与分析模板一致。
+    How it works: copy the analysis template into a local ``PlotSpec`` and swap
+    ``data.wfcs`` for the files of the same name **in this directory** -- so the
+    window, the pole tolerance, the axis settings and the statistics switches all
+    match the analysis template.
     """
     if not point.ok:
         return point
@@ -414,14 +424,15 @@ def render_point(point: PointMetrics, *, template: PlotSpec, write: bool,
 
     local_plot = point.directory / "plot.json"
     if not local_plot.exists():
-        # 补一份模板，让这个目录自足；已存在的不动（可能是你手改过的）
+        # drop in a copy of the template so that the directory is self-contained;
+        # an existing one is left alone (it may have been edited by hand)
         source = Path(template.path)
         try:
             if source.is_file():
                 local_plot.write_text(source.read_text(encoding="utf-8"),
                                       encoding="utf-8")
         except OSError as exc:
-            warnings.append(f"{point.label}：补 plot.json 失败（{exc}）")
+            warnings.append(f"{point.label}: writing plot.json failed ({exc})")
     per_point = replace(
         template, path=local_plot if local_plot.is_file() else template.path,
         data=replace(template.data,
@@ -430,7 +441,7 @@ def render_point(point: PointMetrics, *, template: PlotSpec, write: bool,
     try:
         result = plot_with_spec(per_point, outdir=point.directory, write=write)
     except PpGenError as exc:
-        warnings.append(f"{point.label}：画图/写 parser.json 失败（{exc}）")
+        warnings.append(f"{point.label}: plotting / writing parser.json failed ({exc})")
         return replace(point, render_error=str(exc))
     return replace(point, figure=result.out_file,
                    parser=result.parser_file,

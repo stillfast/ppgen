@@ -1,7 +1,7 @@
-"""测试公用件：``src/`` 挂进 ``sys.path``，以及"run 目录"的夹具。
+"""Shared test fixtures: put ``src/`` on ``sys.path``, plus the "run directory" fixture.
 
-``run 目录`` = 一个自足的目录：``input.json`` + ``parameters/input/ae_radial.yml``
-（以及 prepare/run 跑出来的 ``U.in`` / ``U.out`` …）。
+``run directory`` = a self-contained directory: ``input.json`` + ``parameters/input/ae_radial.yml``
+(plus the ``U.in`` / ``U.out`` ... written by prepare/run).
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ INPUT_JSON = """\
 
 
 def write_wfc(directory: Path, states, rows, *, name="ld1.wfc") -> Path:
-    """写一个最小的 ld1.wfc。``rows`` 是 [(r, u_state0, u_state1, …), …]。"""
+    """Write a minimal ld1.wfc. ``rows`` is [(r, u_state0, u_state1, ...), ...]."""
     path = directory / name
     lines = ["#            r" + "".join(f"{state:>21}" for state in states)]
     for row in rows:
@@ -51,7 +51,7 @@ def write_wfc(directory: Path, states, rows, *, name="ld1.wfc") -> Path:
 
 
 def simple_rows():
-    """r 从 0.01 到 0.10（bohr），两个态：一个正的、一个换号的。"""
+    """r from 0.01 to 0.10 (bohr), two states: one positive, one that changes sign."""
     rows = []
     for index in range(1, 11):
         r = index / 100.0
@@ -60,18 +60,18 @@ def simple_rows():
 
 
 def one_state_rows():
-    """只有 1 个态的网格（列数必须和表头对得上）。"""
+    """A grid with only 1 state (the number of columns must match the header)."""
     return [(row[0], row[1]) for row in simple_rows()]
 
 
 def curved_rows():
-    """两个**真有极值**的态（``simple_rows`` 是单调的，一个极值都没有）：
+    """Two states that **really have extrema** (``simple_rows`` is monotonic, none at all):
 
-    * 第 1 列（2S）= ``r·exp(-r)``           —— 1 个极大、0 个节点
-    * 第 2 列（1S）= ``r(1-r/2)·exp(-r/2)``  —— 1 个节点，2 个极值（max、min）
+    * column 1 (2S) = ``r·exp(-r)``           - 1 maximum, 0 nodes
+    * column 2 (1S) = ``r(1-r/2)·exp(-r/2)``  - 1 node, 2 extrema (max, min)
 
-    r 取 0.05–8.0 bohr 共 321 点：范围要够宽，1S 的极小值（在 ~4.6 bohr 处）
-    才落在网格里。
+    r runs over 0.05-8.0 bohr in 321 points: the range must be wide enough for the
+    minimum of 1S (at about 4.6 bohr) to fall on the grid.
     """
     import numpy as np
     r = np.linspace(0.05, 8.0, 321)
@@ -80,7 +80,7 @@ def curved_rows():
 
 
 def write_dlog(directory: Path, name: str, rows) -> Path:
-    """写一个最小的 dlog：``rows`` 是 [[E, L_l0, L_l1, …], …]。"""
+    """Write a minimal dlog: ``rows`` is [[E, L_l0, L_l1, ...], ...]."""
     path = directory / name
     path.write_text("\n".join("  ".join(f"{v:.12f}" for v in row) for row in rows)
                     + "\n", encoding="utf-8")
@@ -88,10 +88,10 @@ def write_dlog(directory: Path, name: str, rows) -> Path:
 
 
 def sign_rows(flips, *, step=0.05, lo=-1.0, hi=1.0, offset=0.0):
-    """造一条"在每个 flip 处翻符号"的曲线（|L| 固定 100，确保被判成极点）。
+    """Build a curve that "flips sign at every flip" (|L| fixed at 100, so it counts as a pole).
 
-    极点位置 = 跨过 flip 的那两个网格点的中点：flip=0.0 -> -0.025。
-    ``offset`` 给整条曲线加一个常数（用来造出可控的 |ΔL|）。
+    The pole position is the midpoint of the two grid points straddling the flip: flip=0.0 ->
+    -0.025. ``offset`` adds a constant to the whole curve (used to build a controllable |ΔL|).
     """
     rows = []
     for index in range(int((hi - lo) / step) + 1):
@@ -106,7 +106,7 @@ def sign_rows(flips, *, step=0.05, lo=-1.0, hi=1.0, offset=0.0):
 
 def write_plot_json(directory: Path, *, data=None, figure=None,
                     name="plot.json") -> Path:
-    """写一个 plot.json；``data`` / ``figure`` 不写就用最小可用的默认。"""
+    """Write a plot.json; when ``data`` / ``figure`` are not given, use the smallest defaults."""
     payload = {"mode": "wavefunction",
                "data": data if data is not None else {"wfcs": ["ld1.wfc"]},
                "figure": figure if figure is not None else {}}
@@ -117,7 +117,7 @@ def write_plot_json(directory: Path, *, data=None, figure=None,
 
 def write_input(tmp_path: Path, *, parameters_map=None, qe_path="xx",
                 workflow="ld1.x") -> Path:
-    """按需拼一个 ``input.json``（``parameters_map=None`` 时用 ae_radial 的标准写法）。"""
+    """Assemble an ``input.json`` on demand (with ``parameters_map=None``, the ae_radial form)."""
     payload = {
         "workflow": workflow,
         "parameters": {"input": "ae_radial"} if parameters_map is None
@@ -131,10 +131,10 @@ def write_input(tmp_path: Path, *, parameters_map=None, qe_path="xx",
 
 @pytest.fixture()
 def run_dir(tmp_path: Path) -> Path:
-    """一个自足的 run 目录：input.json + parameters/input/ae_radial.yml。
+    """A self-contained run directory: input.json + parameters/input/ae_radial.yml.
 
-    返回**解析过**的绝对路径（``ppgen`` 内部会把路径 resolve 掉），这样断言
-    路径相等时不受 ``/tmp`` 是不是软链接这类事影响。
+    Return the **resolved** absolute path (``ppgen`` resolves paths internally), so that
+    asserting on path equality does not depend on whether ``/tmp`` is a symlink.
     """
     (tmp_path / "parameters" / "input").mkdir(parents=True)
     (tmp_path / "parameters" / "input" / "ae_radial.yml").write_text(
@@ -145,6 +145,6 @@ def run_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def local_parameters(run_dir: Path, monkeypatch):
-    """把参数目录指到 run 目录自己的 parameters/。"""
+    """Point the parameters directory at the run directory's own parameters/."""
     monkeypatch.setenv(config.ENV_PARAMETERS, str(run_dir / "parameters"))
     return run_dir / "parameters"

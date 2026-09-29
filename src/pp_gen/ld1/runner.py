@@ -1,28 +1,34 @@
-"""``run`` 用例：在 run 目录里跑 ``ld1.x``。
+"""``run`` use case: run ``ld1.x`` inside the run directory.
 
-单份输入（如 ``ae_radial``）时等价于参考脚本 ``ppgen/temporary/run.sh`` 的那三行::
+For a single input (such as ``ae_radial``) this is::
 
-    cd <run 目录>
+    cd <run directory>
     $LD1 < U.in > U.out
 
-扫描型工作流（``rc_scan``）则**逐个扫描点**跑：每个点在自己的目录里
-（``runs/5F/rc_1p0/``），产物也落在那里 —— 因为所有点的 ``file_pseudopw`` 名字
-一样（``U.pbe-n-nc.UPF``），不分开就会互相覆盖。
+A scanning workflow (``rc_scan``) runs **one scan point at a time**, each in its
+own directory (``runs/5F/rc_1p0/``), with the products landing there as well:
+every point uses the same ``file_pseudopw`` name (``U.pbe-n-nc.UPF``), so without
+separate directories they would overwrite each other.
 
-差别只在"事后讲清楚"：退出码、耗时、``U.out`` 末尾、以及本次新出现／被改写的
-产物都报出来；``ld1.x`` 失败时把 ``Error in routine`` 那几行直接摆到眼前。
-批量时中途失败**不中断**（扫描的意义就是把点跑完再挑），末尾给汇总与失败清单；
-退出码见 :attr:`BatchResult.returncode`。
+The difference between the two flows is only in how the run is reported
+afterwards: exit code, elapsed time, the tail of ``U.out``, and the products
+created or rewritten by this run; when ``ld1.x`` fails, the ``Error in routine``
+lines are put right in front of the user. In batch mode a failure in the middle
+does **not** abort the rest (the point of a scan is to run every point and then
+choose), and the end prints a summary plus the list of failures; see
+:attr:`BatchResult.returncode`.
 
-两套流程（``ppgen run`` 分这两种）：
+Two flows (``ppgen run`` has these two):
 
-* **``ppgen run``（不给 ``-i``）**：在**当前目录**直接跑现成的那份 ``ld1.x``
-  输入（``U.in``，或目录里唯一那份 ``*.in``）—— 不读配置、**不生成**、不校验。
-  想"原样再跑一次手改过的输入"就用它；``ppgen run U.in`` 同理。
-* **``ppgen run -i input.json``**：按 ``input.json`` **先生成、再运行** ——
-  每次都重新生成一遍输入（覆盖同名文件，所以手改版会被覆盖；要保住手改版就用
-  上面那种直接跑），扫描型则逐个点生成 ``runs/<轨道>/rc_<值>/U.in`` 再跑。
-* ``stdout`` -> ``U.out``，``stderr`` -> ``U.err``（同时回显到终端）。
+* **``ppgen run`` (no ``-i``)**: run the existing ``ld1.x`` input in the
+  **current directory** (``U.in``, or the only ``*.in`` there) -- no config is
+  read, nothing is **generated**, nothing is validated. Use it to re-run a
+  hand-edited input as it is; ``ppgen run U.in`` is the same.
+* **``ppgen run -i input.json``**: **generate first, then run**: the inputs are
+  regenerated every time (same-named files are overwritten, so hand edits are
+  lost -- use the direct form above to keep them); for a scan it generates
+  ``runs/<orbital>/rc_<value>/U.in`` per point and then runs them.
+* ``stdout`` -> ``U.out``, ``stderr`` -> ``U.err`` (also echoed to the terminal).
 """
 from __future__ import annotations
 from ..scans import axis as axis
@@ -44,20 +50,21 @@ from ..scans import points as scan
 from ..core.errors import RunError
 from ..inputs.generation import PrepareResult, PrepareTarget, prepare
 
-#: ``ld1.x`` 遇到致命错误时的输出特征（``errore`` 打印的那几行）
+#: output marks of a fatal ``ld1.x`` error (the lines printed by ``errore``)
 _ERROR_MARKERS = ("Error in routine", "stopping ...")
-#: 报告 ``U.out`` 末尾时读多少字节（``U.out`` 可能很大，不做全文读）
+#: how many bytes are read for the tail of ``U.out`` (it can be large, so it is never read whole)
 _TAIL_BYTES = 8192
 _TAIL_LINES = 12
 
 
 @dataclass(frozen=True)
 class Artifact:
-    """本次运行新出现或被改写的文件。"""
+    """A file created or rewritten by this run."""
 
     path: Path
     size: int
-    #: 同名文件此前就存在（= 被覆盖），而不是这次新建的
+    #: a file of that name already existed (= it was overwritten), rather than
+    #: having just been created
     replaced: bool = False
 
     @property
@@ -66,12 +73,12 @@ class Artifact:
 
     @property
     def how(self) -> str:
-        return "覆盖" if self.replaced else "新建"
+        return "overwritten" if self.replaced else "new"
 
 
 @dataclass(frozen=True)
 class RunResult:
-    """**一个目标**跑一次 ``ld1.x`` 的结果。"""
+    """Result of running ``ld1.x`` once for **one target**."""
 
     in_file: Path
     out_file: Path
@@ -79,46 +86,49 @@ class RunResult:
     run_dir: Path
     ld1: Path
     command: Tuple[str, ...]
-    #: 是否真的执行了（``--dry-run`` 时为 False）
+    #: whether it really ran (False under ``--dry-run``)
     executed: bool
-    #: 扫描点标签（``5F rc=1.0`` / ``5F-2 ener=-0.6`` / ``cfg1 5f3 6s2 …``）
+    #: scan point label (``5F rc=1.0`` / ``5F-2 ener=-0.6`` / ``cfg1 5f3 6s2 ...``)
     label: str = ""
-    #: ``update: true`` 分组用的名字：轨道名（rc 扫描）或卡片键（能量扫描）
+    #: name used for grouping under ``update: true``: the orbital name (rc scan)
+    #: or the card key (energy scan)
     orbital: str = ""
-    #: 扫描值（rc 扫描是 rcut，能量扫描是 ener）
+    #: scanned value (rcut for an rc scan, ener for an energy scan)
     rcut: Optional[float] = None
-    #: 扫的是哪一列 —— 报告与 ``output.json`` 的键名/单位都看它
+    #: which axis is scanned -- the report and the ``output.json`` key names/units
+    #: follow it
     axis: axis.Axis = axis.RCUT_AXIS
-    #: ``configts`` 工作流：这个点用的测试组态（别的工况是空串）
+    #: ``configts`` workflow: the test configuration used by this point (empty
+    #: string for other workflows)
     config: str = ""
     returncode: Optional[int] = None
     seconds: Optional[float] = None
     artifacts: Tuple[Artifact, ...] = field(default=())
     out_tail: str = ""
     error_hint: Optional[str] = None
-    #: 超时的说明（``timed_out=True`` 时用）
+    #: timeout description (used when ``timed_out=True``)
     timeout_reason: str = ""
-    #: 该跑却没跑起来的原因（如输入文件不存在）
+    #: why it should have run but did not (e.g. the input file does not exist)
     skipped: Optional[str] = None
-    #: 超时被终止（``returncode`` 会是 None）
+    #: terminated by a timeout (``returncode`` is then None)
     timed_out: bool = False
-    #: 这一次自己的提醒（如"退出码是 0 但输出里有错误标记"）
+    #: warnings for this run (e.g. "exit code 0 but the output has an error marker")
     warnings: Tuple[str, ...] = field(default=())
 
     @property
     def exit_reason(self) -> str:
-        """一句话说清"为什么是这个退出码"（写进 ``output.json``）。"""
+        """One line explaining why the exit code is what it is (written into ``output.json``)."""
         if self.skipped:
             return self.skipped
         if not self.executed:
-            return "干跑：没有执行"
+            return "dry run: not executed"
         if self.timed_out:
-            return self.timeout_reason or "超时，已被终止"
+            return self.timeout_reason or "timed out, terminated"
         if self.returncode == 0:
-            return "正常结束"
+            return "finished normally"
         if self.error_hint:
             return self.error_hint
-        return f"ld1.x 退出码 {self.returncode}，但输出里没有 'Error in routine' 标记"
+        return f"ld1.x exited with code {self.returncode}, but the output has no 'Error in routine' marker"
 
     @property
     def ok(self) -> bool:
@@ -130,45 +140,46 @@ class RunResult:
 
     @property
     def shell_line(self) -> str:
-        """能直接粘到终端里复现的那一行。"""
+        """The line to paste into a terminal to reproduce this run."""
         return (f"cd {self.run_dir} && {self.ld1} "
                 f"< {self.in_file.name} > {self.out_file.name}")
 
     @property
     def status(self) -> str:
         if not self.executed:
-            return "干跑" if not self.skipped else "跳过"
+            return "dry run" if not self.skipped else "skipped"
         if self.timed_out:
-            return "失败（超时终止）"
+            return "failed (timed out)"
         if self.returncode == 0:
-            return "成功"
-        return f"失败（退出码 {self.returncode}）"
+            return "succeeded"
+        return f"failed (exit code {self.returncode})"
 
 
 @dataclass(frozen=True)
 class BatchResult:
-    """一次 ``ppgen run`` 的整体结果（可能包含很多个扫描点）。"""
+    """Overall result of one ``ppgen run`` (possibly many scan points)."""
 
     input_path: Path
     run_dir: Path
     workflow: str
     qe_path: str
     ld1: Path
-    #: 执行前是否重新生成了输入（``-i`` 那一套会，直接跑不会）
+    #: whether inputs were regenerated before execution (the ``-i`` flow does, the
+    #: direct run does not)
     prepared: bool
-    #: 重新生成（覆盖）的输入个数
+    #: number of inputs regenerated (overwritten)
     prepared_count: int
     dry_run: bool
     runs: Tuple[RunResult, ...]
-    #: 直接跑一份输入（没有 input.json、没生成、没校验）
+    #: running one input directly (no input.json, no generation, no validation)
     direct: bool = False
-    #: 起跑时间（ISO 8601，本地时区）
+    #: start time (ISO 8601, local timezone)
     started_at: str = ""
-    #: 写出去的 ``output.json``（干跑时为 None）
+    #: the ``output.json`` that was written (None under a dry run)
     output_file: Optional[Path] = None
-    #: 扫完各轨道后的 ``rcut`` 更新记录（``update: true`` 才有）
+    #: ``rcut`` update records after scanning each orbital (only with ``update: true``)
     updates: Tuple[update.ScanUpdate, ...] = field(default=())
-    #: 这次用的 ``update`` 设置（没开就是 None）
+    #: the ``update`` settings used here (None when it is off)
     update_spec: Optional[update.UpdateSpec] = None
     warnings: Tuple[str, ...] = field(default=())
 
@@ -190,11 +201,13 @@ class BatchResult:
 
     @property
     def returncode(self) -> int:
-        """全部成功给 0。
+        """0 when everything succeeded.
 
-        只有一个目标时**原样透传** ``ld1.x`` 的退出码（脚本里 ``$?`` 还有意义，
-        包括超时那种"没有退出码"的情况给 1）；多个目标时给 1（失败个数不塞进
-        退出码里，避免 >255 截断），具体哪个失败看 :attr:`failed`。
+        With a single target the exit code of ``ld1.x`` is **passed through**
+        (``$?`` stays meaningful in scripts, including 1 for a timeout, where
+        there is no exit code); with several targets it is 1 (the number of
+        failures is not packed into the exit code, to avoid truncation above 255)
+        and :attr:`failed` tells which one failed.
         """
         if self.dry_run:
             return 0
@@ -213,21 +226,22 @@ class BatchResult:
         return len(self.runs) > 1
 
     def single(self) -> RunResult:
-        """只有一个目标时返回它；否则报错（供脚本用）。"""
+        """Return the single target, or raise when there are several (for scripts)."""
         if len(self.runs) != 1:
-            raise RunError(f"这次有 {len(self.runs)} 个目标，不是单个")
+            raise RunError(f"this run has {len(self.runs)} targets, not one")
         return self.runs[0]
 
 
 def classify_input(path: Path) -> str:
-    """``-i`` 给的是 ``input.json`` 还是直接的 ``ld1.x`` 输入文件。
+    """Whether ``-i`` points at an ``input.json`` or at an ``ld1.x`` input file.
 
-    按**内容**认：能解析成 JSON 且有 ``workflow`` 键的当配置文件，其余（``U.in``
-    这种 namelist 文本、或没有 ``workflow`` 的 JSON）当"直接跑这份输入"。
+    Decided by **content**: something that parses as JSON and has a ``workflow``
+    key is a config file; anything else (namelist text such as ``U.in``, or JSON
+    without ``workflow``) means "run this input directly".
     """
     path = Path(path).expanduser()
     if not path.is_file():
-        raise RunError(f"找不到输入文件：{path}")
+        raise RunError(f"input file not found: {path}")
     if path.suffix.lower() == ".json":
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -239,9 +253,10 @@ def classify_input(path: Path) -> str:
 
 
 def find_direct_input(directory: Optional[Path] = None) -> Path:
-    """在当前目录里找要跑的 ``ld1.x`` 输入。
+    """Find the ``ld1.x`` input to run in the current directory.
 
-    优先 ``U.in``；否则目录里**只有一份** ``*.in`` 时就用它；多份就报错让用户点名。
+    ``U.in`` wins; otherwise a **single** ``*.in`` in the directory is used; with
+    several the user must name one.
     """
     here = Path(directory).expanduser() if directory is not None else Path.cwd()
     here = here.resolve()
@@ -253,24 +268,26 @@ def find_direct_input(directory: Optional[Path] = None) -> Path:
         return candidates[0]
     if not candidates:
         raise RunError(
-            f"{here} 里没有 U.in（也没有别的 *.in）—— 给 -i 指定要跑的输入，"
-            f"或者先 ppgen prepare 生成一份")
-    names = "、".join(p.name for p in candidates[:8])
+            f"no U.in in {here} (and no other *.in) -- name the input with -i, "
+            f"or run ppgen prepare first to generate one")
+    names = ", ".join(p.name for p in candidates[:8])
     raise RunError(
-        f"{here} 里有 {len(candidates)} 份 *.in（{names}），不知道该跑哪一份 ——"
-        f"用 -i 指定，或把要跑的那份叫 U.in")
+        f"{here} has {len(candidates)} *.in files ({names}) and there is no way "
+        f"to tell which to run -- name one with -i, or call the one to run U.in")
 
 
 def run_direct(in_file: Optional[Path] = None, *, ld1: Optional[Path] = None,
-               write_back: bool = True,  # 兼容签名，直接模式下无 input.json 可写
+               write_back: bool = True,  # kept for signature compatibility; direct mode has no input.json to write
                dry_run: bool = False,
                timeout: Optional[float] = config.DEFAULT_TIMEOUT_SECONDS,
                ) -> BatchResult:
-    """**直接跑**一份 ``ld1.x`` 输入：``ld1.x < U.in > U.out``。
+    """**Run** an ``ld1.x`` input directly: ``ld1.x < U.in > U.out``.
 
-    不读 ``input.json``、不生成输入、也不做参数校验 —— 就是"在这个目录里把它跑一遍"
-    （等价于参考脚本 ``ppgen/temporary/run.sh``）。``ld1.x`` 取
-    ``config.default_qe_path()``（环境变量 ``PPGEN_QE_PATH`` 可覆盖）。
+    It does not read ``input.json``, does not generate inputs and does no
+    parameter validation -- it simply runs it in this directory, the same as
+    typing ``ld1.x < U.in > U.out`` by hand. ``ld1.x`` comes from
+    ``config.default_qe_path()`` (the ``PPGEN_QE_PATH`` environment variable
+    overrides it).
     """
     path = (Path(in_file).expanduser() if in_file is not None
             else find_direct_input())
@@ -278,14 +295,15 @@ def run_direct(in_file: Optional[Path] = None, *, ld1: Optional[Path] = None,
         path = Path.cwd() / path
     path = path.resolve()
     if not path.is_file():
-        raise RunError(f"找不到输入文件：{path}")
+        raise RunError(f"input file not found: {path}")
 
     binary = Path(ld1) if ld1 is not None else config.qe_binary(
         config.default_qe_path())
     if not (binary.is_file() and os.access(binary, os.X_OK)):
         raise RunError(
-            f"没有可执行的 ld1.x：{binary}。用 --qe 指定，或设环境变量 "
-            f"{config.ENV_QE_PATH}（默认 {config.default_qe_path()}）")
+            f"no executable ld1.x at {binary}. Pass --qe, or set the "
+            f"{config.ENV_QE_PATH} environment variable (default "
+            f"{config.default_qe_path()})")
 
     target = PrepareTarget(path=path, text="", written=False, overwrote=False)
     started_at = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -308,18 +326,21 @@ def run(input_path: Optional[Path] = None, *, outdir: Optional[Path] = None,
         rc: Optional[Sequence[float]] = None,
         ener: Optional[Sequence[float]] = None,
         ld1: Optional[Path] = None) -> BatchResult:
-    """跑 ``input.json`` 对应的全部目标（单份输入时就是一个）。
+    """Run every target of ``input.json`` (a single one for a single input).
 
-    **两套流程**：
+    **Two flows**:
 
-    * 给了 ``input.json``：**先生成、再运行** —— 每次都按配置重新生成输入
-      （覆盖同名文件；扫描型则是每个点一份），然后逐个跑 ``ld1.x``；
-    * ``input_path=None``，或给的其实是一份 ``ld1.x`` 输入（``U.in``）：**直接跑**
-      那个文件，不读配置、不生成、不校验（见 :func:`run_direct`）。
+    * with ``input.json``: **generate first, then run** -- the inputs are
+      regenerated from the configuration every time (same-named files are
+      overwritten; for a scan one file per point), then ``ld1.x`` runs on each;
+    * with ``input_path=None``, or when the given file is really an ``ld1.x``
+      input (``U.in``): **run that file directly**, without reading a config,
+      generating inputs or validating (see :func:`run_direct`).
 
-    扫描参数里写了 ``"update": true`` 时改成**逐轨道串行**：扫完一个轨道就挑出
-    最佳点、把它的 ``rcut`` 写回参数文件，再用新值生成并扫描下一个轨道
-    （见 :mod:`pp_gen.update`）。
+    When the scan parameters set ``"update": true`` it switches to **serial,
+    orbital by orbital** execution: after an orbital is scanned the best point is
+    picked, its ``rcut`` is written back into the parameter file, and the next
+    orbital is generated and scanned with the new value (see :mod:`pp_gen.update`).
     """
     if input_path is None:
         return run_direct(None, ld1=ld1, dry_run=dry_run, timeout=timeout)
@@ -327,7 +348,8 @@ def run(input_path: Optional[Path] = None, *, outdir: Optional[Path] = None,
         return run_direct(input_path, ld1=ld1, dry_run=dry_run, timeout=timeout)
 
     path = Path(input_path)
-    # 先探一遍（不写文件）：拿工作流、qe_path、扫描点，以及 update 开关
+    # probe first (nothing is written): workflow, qe_path, scan points and the
+    # update flag
     probe: PrepareResult = prepare(path, outdir=outdir, write_output=False,
                                    write_back_qe_path=False, only=only, rc=rc,
                                    ener=ener)
@@ -336,14 +358,16 @@ def run(input_path: Optional[Path] = None, *, outdir: Optional[Path] = None,
                             source=str(probe.parameter_files[-1])
                             if probe.parameter_files else "")
 
-    # update 开了就逐组串行（每组的输入都要用**上一步更新后**的值重新生成）
+    # with update enabled, run the groups serially: each group's input must be
+    # regenerated with the value **updated by the previous step**
     groups: List[Optional[List[str]]] = [None]
     if spec.enabled and probe.scan_points and not dry_run:
         groups = [[name] for name in update.orbital_order(probe.scan_points)]
     elif spec.enabled and dry_run:
         warnings.append(
-            f"扫描参数里开了 {settings.UPDATE_KEY}（{spec.describe()}），"
-            f"但这次是干跑：不会跑、也不会更新扫描值")
+            f"the scan parameters enable {settings.UPDATE_KEY} "
+            f"({spec.describe()}), but this is a dry run: nothing runs and no "
+            f"scanned value is updated")
     if spec.enabled and not spec.window and probe.scan_points:
         note = update.wide_window_note(spec, probe.sections)
         if note:
@@ -352,17 +376,18 @@ def run(input_path: Optional[Path] = None, *, outdir: Optional[Path] = None,
     ld1 = config.qe_binary(probe.qe_path)
     if not (ld1.is_file() and os.access(ld1, os.X_OK)):
         raise RunError(
-            f"qe_path 下没有可执行的 ld1.x：{ld1}（qe_path="
-            f"{probe.qe_path!r}）。检查 input.json 的 qe_path，"
-            f"或用环境变量 {config.ENV_QE_PATH} 覆盖")
+            f"no executable ld1.x under qe_path: {ld1} (qe_path="
+            f"{probe.qe_path!r}). Check qe_path in input.json, or override it "
+            f"with the {config.ENV_QE_PATH} environment variable")
 
-    # 批量（扫描）时不把每个点的 stderr 都往终端吐：55 个点会有 55 段
-    # OpenMPI/MPI_ABORT 噪声，抄屏且没用 —— 它们照样写进各自的 U.err。
+    # In batch (scan) mode the stderr of every point is not dumped to the
+    # terminal: 55 points mean 55 blocks of OpenMPI/MPI_ABORT noise that flood
+    # the screen without being useful; they are still written to each U.err.
     echo_stderr = len(probe.targets) == 1
     if not echo_stderr:
         warnings.append(
-            "批量执行：每个点的 stderr 写进各自的 U.err，不逐条回显"
-            "（要看就打开对应目录下的 U.err）")
+            "batch execution: the stderr of each point goes to its own U.err and "
+            "is not echoed (open that U.err to see it)")
     started_at = datetime.now().astimezone().isoformat(timespec="seconds")
 
     runs: List[RunResult] = []
@@ -398,9 +423,10 @@ def run(input_path: Optional[Path] = None, *, outdir: Optional[Path] = None,
         updates.append(outcome)
         if outcome.written:
             warnings.append(
-                f"{outcome.orbital} 的 {outcome.axis.key} 已更新为 "
-                f"{update.describe_value(outcome.axis, outcome.value)}"
-                f"（写回 {outcome.file}）；后面的组用这个新值生成")
+                f"{outcome.orbital}: {outcome.axis.key} updated to "
+                f"{update.describe_value(outcome.axis, outcome.value)} (written "
+                f"back to {outcome.file}); later groups are generated with this "
+                f"new value")
 
     assert base is not None                                 # pragma: no cover
     result = BatchResult(
@@ -425,27 +451,30 @@ def run(input_path: Optional[Path] = None, *, outdir: Optional[Path] = None,
 
 def _check_targets(targets: Sequence[PrepareTarget], prepared: PrepareResult,
                    *, dry_run: bool) -> List[str]:
-    """生成之后还缺输入文件时的提醒 / 报错。"""
+    """Warning / error when input files are still missing after generation."""
     missing = [item for item in targets if not item.path.is_file()]
     if missing and not dry_run and len(missing) == len(targets):
         raise RunError(
-            f"生成之后仍然没有输入文件 {targets[0].path}"
-            + (f"（另外 {len(missing) - 1} 个也缺）" if len(missing) > 1 else "")
-            + f" —— 检查 {prepared.input_path.parent} 能不能写，或者先单独跑"
-              f"一次 `ppgen prepare -i {prepared.input_path}` 看它报什么错")
+            f"there is still no input file after generation: {targets[0].path}"
+            + (f" ({len(missing) - 1} more are missing too)" if len(missing) > 1 else "")
+            + f" -- check that {prepared.input_path.parent} is writable, or run"
+              f" `ppgen prepare -i {prepared.input_path}` on its own to see its error")
     if missing:
         example = missing[0].path
-        return [(f"{example} 还不存在（另有 {len(missing) - 1} 个同样缺）；"
-                 f"干跑不写文件，真实运行会先把它生成出来" if dry_run else
-                 f"有 {len(missing)} 个目标没生成成功，会被跳过；例如 {example}")]
+        return [(f"{example} does not exist yet ({len(missing) - 1} more are "
+                 f"missing too); a dry run writes no files, a real run would "
+                 f"generate it first" if dry_run else
+                 f"{len(missing)} targets were not generated and will be skipped; "
+                 f"for instance {example}")]
     return []
 
 
 def _candidates(prepared: PrepareResult, spec: update.UpdateSpec, runs=()):
-    """这次跑出来的点里，哪些能量出"最佳"。
+    """Which of the points run this time can yield a "best" value.
 
-    **只认这次真的跑成功的点**：失败的点目录里可能留着上一轮的旧 dlog，拿它
-    和这次新写的 dlog 比会得出莫名其妙的结果。
+    **Only points that really succeeded count**: a failed point's directory may
+    still hold the dlog of an earlier round, and comparing it with a freshly
+    written dlog gives meaningless results.
     """
     done = {item.run_dir for item in runs if item.ok}
     found = []
@@ -465,7 +494,7 @@ def _candidates(prepared: PrepareResult, spec: update.UpdateSpec, runs=()):
 
 
 def _center_of(probe: PrepareResult, group: str) -> Optional[float]:
-    """卡片里这一组原来的扫描值（更新前）。"""
+    """The group's original scanned value in the card (before the update)."""
     for point in probe.scan_points:
         if getattr(point, "group", None) == group:
             return round(point.value - point.offset, 10)
@@ -473,7 +502,7 @@ def _center_of(probe: PrepareResult, group: str) -> Optional[float]:
 
 
 def _target_of(probe: PrepareResult, group: str) -> update.Target:
-    """这一组要写回的那张卡片（``update: true`` 用）。"""
+    """The card this group writes back to (used with ``update: true``)."""
     for point in probe.scan_points:
         if getattr(point, "group", None) == group:
             return update.target_of(point)
@@ -481,7 +510,8 @@ def _target_of(probe: PrepareResult, group: str) -> update.Target:
 
 
 def run_one(input_path: Path, **kwargs) -> RunResult:
-    """只跑一个目标并返回那一次的结果（单份输入工作流 / 脚本里方便）。"""
+    """Run a single target and return that one result (handy for the single-input
+    workflow and in scripts)."""
     return run(input_path, **kwargs).single()
 
 
@@ -504,7 +534,7 @@ def _run_one(target: PrepareTarget, *, ld1: Path, timeout: Optional[float],
 
     if not in_file.is_file():
         return _result(executed=False,
-                       skipped=f"找不到输入文件 {in_file.name}")
+                       skipped=f"input file {in_file.name} not found")
 
     if dry_run:
         return _result(executed=False)
@@ -518,17 +548,18 @@ def _run_one(target: PrepareTarget, *, ld1: Path, timeout: Optional[float],
                 stderr=subprocess.PIPE, cwd=str(run_dir),
                 timeout=timeout)
     except subprocess.TimeoutExpired:
-        # 超时只算"这一次失败"：批量扫描不该因为一个点卡住就丢掉其余点的记录
+        # a timeout counts as a failure of this run only: a batch scan must not
+        # lose the records of the other points because one got stuck
         tail = _tail_text(out_file)
         return _result(
             executed=True, returncode=None, timed_out=True,
             seconds=time.monotonic() - started, out_tail=tail,
-            timeout_reason=f"跑了 {timeout:g} 秒还没结束，已被终止",
-            warnings=(f"{out_file.name} 末尾：{tail.splitlines()[-1].strip()}"
+            timeout_reason=f"still running after {timeout:g} s, terminated",
+            warnings=(f"{out_file.name} tail: {tail.splitlines()[-1].strip()}"
                       if tail else "",),
         )
     except OSError as exc:
-        raise RunError(f"起不了 ld1.x（{ld1}）：{exc}") from exc
+        raise RunError(f"cannot start ld1.x ({ld1}): {exc}") from exc
     seconds = time.monotonic() - started
 
     stderr_text = (proc.stderr or b"").decode("utf-8", "replace")
@@ -545,11 +576,11 @@ def _run_one(target: PrepareTarget, *, ld1: Path, timeout: Optional[float],
     hint = _error_hint(tail)
     run_warnings: List[str] = []
     if hint and proc.returncode == 0:
-        run_warnings.append(f"ld1.x 退出码是 0，但输出里有错误标记：{hint}")
+        run_warnings.append(f"ld1.x exited with code 0, but the output has an error marker: {hint}")
     elif hint is None and proc.returncode != 0:
         run_warnings.append(
-            f"ld1.x 退出码是 {proc.returncode}，但 {out_file.name} 里没找到"
-            f"'Error in routine' 那类标记；末尾见下")
+            f"ld1.x exited with code {proc.returncode}, but {out_file.name} has no"
+            f" 'Error in routine' marker of that kind; see the tail below")
 
     return _result(
         executed=True,
@@ -563,26 +594,29 @@ def _run_one(target: PrepareTarget, *, ld1: Path, timeout: Optional[float],
 
 
 def output_json_path(input_path: Path) -> Path:
-    """``output.json`` 的位置：与输入文件同目录（``input.json`` 旁边，或 ``U.in`` 旁边）。"""
+    """Location of ``output.json``: the directory of the input file (next to
+    ``input.json`` or ``U.in``)."""
     return Path(input_path).parent / "output.json"
 
 
 def output_json(result: BatchResult,
                 *, finished_at: Optional[str] = None) -> Dict[str, object]:
-    """把这次 ``run`` 整理成 ``output.json`` 的内容。
+    """Turn this ``run`` into the content of ``output.json``.
 
-    每个任务都记 **exit code**、**exit reason**、**运行目录**（用户要的三样），
-    外加"怎么复现"所需的输入文件名、耗时与产物清单 —— 光有退出码，回头查不出
-    "这条记录说的是哪个点、在哪个目录、跑的是哪份输入"。
+    Every task records its **exit code**, **exit reason** and **run directory**
+    (the three things the user asked for), plus the input file name, elapsed time
+    and product list needed to reproduce it: an exit code alone cannot answer
+    "which point, in which directory, running which input".
     """
     tasks = []
     for item in result.runs:
         tasks.append({
             "label": item.label,
             "orbital": item.orbital,
-            # 扫描值：键名跟着扫描轴走 —— rc_scan 是 "rcut"（沿用旧名字，
-            # 已有的 output.json 还能读），energy_scan 是 "ener"；报告按
-            # "scanned" 决定表头与单位
+            # scanned value: the key follows the scan axis -- "rcut" for rc_scan
+            # (the older name is kept so existing output.json files still read),
+            # "ener" for energy_scan; the report uses "scanned" for the headers
+            # and units
             "scanned": item.axis.key,
             item.axis.key: item.rcut,
             "config": item.config,
@@ -618,7 +652,7 @@ def output_json(result: BatchResult,
 
 def _update_json(item: update.ScanUpdate,
                  result: BatchResult) -> Dict[str, object]:
-    """一条扫描值更新记录（``update: true`` 时才有内容）。"""
+    """One scanned-value update record (only filled in with ``update: true``)."""
     return {
         "orbital": item.orbital,
         "scanned": item.axis.key,
@@ -641,7 +675,7 @@ def _update_json(item: update.ScanUpdate,
 
 def write_output_json(result: BatchResult, *,
                       path: Optional[Path] = None) -> Path:
-    """写 ``output.json``（默认放在 ``input.json`` 旁边）。"""
+    """Write ``output.json`` (next to ``input.json`` by default)."""
     target = Path(path) if path is not None else output_json_path(result.input_path)
     payload = output_json(result)
     try:
@@ -649,15 +683,15 @@ def write_output_json(result: BatchResult, *,
         target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
                           encoding="utf-8")
     except OSError as exc:
-        raise RunError(f"写不了 {target}：{exc}") from exc
+        raise RunError(f"cannot write {target}: {exc}") from exc
     return target
 
 
 # --------------------------------------------------------------------------
-# 小工具
+# Small helpers
 # --------------------------------------------------------------------------
 def _snapshot(directory: Path) -> Dict[str, Tuple[int, int]]:
-    """目录快照：{文件名: (mtime_ns, size)}。"""
+    """Directory snapshot: {file name: (mtime_ns, size)}."""
     out: Dict[str, Tuple[int, int]] = {}
     try:
         with os.scandir(directory) as entries:
@@ -668,17 +702,17 @@ def _snapshot(directory: Path) -> Dict[str, Tuple[int, int]]:
                     continue
                 out[entry.name] = (info.st_mtime_ns, info.st_size)
     except OSError as exc:
-        raise RunError(f"读不了目录 {directory}：{exc}") from exc
+        raise RunError(f"cannot read directory {directory}: {exc}") from exc
     return out
 
 
 def _diff(directory: Path, before: Dict[str, Tuple[int, int]],
           skip: set) -> Tuple[Artifact, ...]:
-    """新出现或被改写的文件（按名字排序）。
+    """Files created or rewritten (sorted by name).
 
-    ``replaced`` 区分"覆盖了原来就有的"与"这次新建的" —— 光看产物清单
-    分不清这两件事，而这恰恰是最容易被问到的（"它到底有没有覆盖我的
-    ``ld1.wfc``？"）。
+    ``replaced`` separates "overwrote something that was already there" from
+    "created in this run": a bare product list cannot tell those two apart, and
+    that is exactly what gets asked ("did it overwrite my ``ld1.wfc``?").
     """
     after = _snapshot(directory)
     changed = [name for name, stamp in after.items()
@@ -689,7 +723,7 @@ def _diff(directory: Path, before: Dict[str, Tuple[int, int]],
 
 
 def _tail_text(path: Path, *, lines: int = _TAIL_LINES) -> str:
-    """文件末尾若干行（只读尾巴，不整file读进来）。"""
+    """The last few lines of a file (only the tail is read, never the whole file)."""
     try:
         size = path.stat().st_size
         with open(path, "rb") as handle:
@@ -700,7 +734,7 @@ def _tail_text(path: Path, *, lines: int = _TAIL_LINES) -> str:
         return ""
     text = data.decode("utf-8", "replace")
     if size > _TAIL_BYTES:
-        text = text.split("\n", 1)[-1]              # 丢掉被截断的首行
+        text = text.split("\n", 1)[-1]              # drop the truncated first line
     body = [ln.rstrip() for ln in text.splitlines()]
     while body and not body[-1]:
         body.pop()
@@ -708,7 +742,7 @@ def _tail_text(path: Path, *, lines: int = _TAIL_LINES) -> str:
 
 
 def _error_hint(tail: str) -> Optional[str]:
-    """从 ``U.out`` 末尾挑出 ``Error in routine ...`` 那几行。"""
+    """Pick the ``Error in routine ...`` lines out of the ``U.out`` tail."""
     lines = tail.splitlines()
     for index, line in enumerate(lines):
         if _ERROR_MARKERS[0] in line:

@@ -1,8 +1,10 @@
-"""``ppgen run`` 的测试。
+"""Tests for ``ppgen run``.
 
-大多用一个**假的 ld1.x**（一个读 stdin、写 stdout、在 cwd 里落一个文件的
-bash 脚本），这样能精确控制退出码与 stderr，又能断言"cwd 是 run 目录"这类
-只有真跑才看得出来的事。最后有一个真跑 QE 的集成测试（``slow``）。
+Most of them use a **fake ld1.x** (a bash script that reads stdin, writes
+stdout and drops a file in the cwd), which pins the exit code and stderr down
+exactly and can assert things such as "the cwd is the run directory" that only a
+real execution reveals. At the end there is one integration test that really
+runs QE (``slow``).
 """
 from __future__ import annotations
 
@@ -19,9 +21,9 @@ from pp_gen.ld1.runner import run, run_one
 
 FAKE_LD1 = """\
 #!/usr/bin/env bash
-cat > /dev/null                       # 吃掉 stdin（真实的 ld1.x 也这么读输入）
+cat > /dev/null                       # swallow stdin (the real ld1.x reads it the same way)
 echo "fake ld1 saw: $*"
-echo "fake artifact" > fake.dat       # 落在 cwd —— 用来验证 cwd 是 run 目录
+echo "fake artifact" > fake.dat       # lands in the cwd -- proves the cwd is the run dir
 echo "fake stderr note" >&2
 exit "${FAKE_LD1_EXIT:-0}"
 """
@@ -46,7 +48,7 @@ SENTINEL_IN = "&input\n  title = 'hand edited, do not clobber',\n/\n"
 
 
 def install_fake_ld1(directory: Path, body: str = FAKE_LD1) -> Path:
-    """在 ``directory/fakebin/ld1.x`` 放一个假的可执行文件，返回那个 bin 目录。"""
+    """Put a fake executable at ``directory/fakebin/ld1.x`` and return that bin directory."""
     bin_dir = directory / "fakebin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / "ld1.x"
@@ -57,21 +59,21 @@ def install_fake_ld1(directory: Path, body: str = FAKE_LD1) -> Path:
 
 @pytest.fixture()
 def fake_ld1(run_dir: Path, local_parameters) -> Path:
-    """装好假 ld1.x，并把 input.json 的 qe_path 指过去。"""
+    """Install the fake ld1.x and point the qe_path of input.json at it."""
     bin_dir = install_fake_ld1(run_dir)
     write_input(run_dir, qe_path=str(bin_dir))
     return bin_dir
 
 
 def use_fake(run_dir: Path, body: str) -> Path:
-    """换一个假 ld1.x 的实现（同一个 bin 目录）。"""
+    """Swap in another fake ld1.x implementation (the same bin directory)."""
     bin_dir = install_fake_ld1(run_dir, body)
     write_input(run_dir, qe_path=str(bin_dir))
     return bin_dir
 
 
 # --------------------------------------------------------------------------
-# 正常路径
+# Happy path
 # --------------------------------------------------------------------------
 def test_run_executes_in_run_dir_and_reports_artifacts(fake_ld1, run_dir):
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
@@ -86,18 +88,20 @@ def test_run_executes_in_run_dir_and_reports_artifacts(fake_ld1, run_dir):
     assert result.err_file == run_dir / "U.err"
     assert result.ld1 == fake_ld1 / "ld1.x"
 
-    # cwd 是 run 目录：假 ld1.x 把 fake.dat 写在 cwd
+    # the cwd is the run directory: the fake ld1.x writes fake.dat into the cwd
     assert (run_dir / "fake.dat").read_text(encoding="utf-8").strip() == "fake artifact"
     assert "fake ld1 saw" in (run_dir / "U.out").read_text(encoding="utf-8")
     assert "fake stderr note" in (run_dir / "U.err").read_text(encoding="utf-8")
     assert "< U.in > U.out" in result.shell_line
     assert "fake.dat" in [a.name for a in result.artifacts]
-    # U.in / U.out / U.err 不算"产物"
+    # U.in / U.out / U.err do not count as "artifacts"
     assert {"U.in", "U.out", "U.err"}.isdisjoint({a.name for a in result.artifacts})
 
 
 def test_run_i_regenerates_and_overwrites_hand_edited_in(fake_ld1, run_dir):
-    """``-i`` 那一套的语义就是"生成文件并运行"：每次都重新生成、覆盖同名文件。"""
+    """The ``-i`` flow means "render the file and run it": every time it is
+    rendered again and same-named files are overwritten.
+    """
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
 
     batch = run(run_dir / "input.json")
@@ -111,7 +115,7 @@ def test_run_i_regenerates_and_overwrites_hand_edited_in(fake_ld1, run_dir):
 
 
 def test_direct_run_keeps_hand_edited_in(fake_ld1, run_dir, monkeypatch):
-    """想"原样跑手改过的那份"，走直接模式：不给 ``-i``。"""
+    """To "run the hand-edited one as it is", use the direct mode: no ``-i``."""
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
     monkeypatch.chdir(run_dir)
 
@@ -141,10 +145,10 @@ def test_run_writes_err_only_when_stderr_not_empty(fake_ld1, run_dir):
 
 
 # --------------------------------------------------------------------------
-# 失败路径
+# Failure paths
 # --------------------------------------------------------------------------
 def test_run_generates_the_input_when_it_is_missing(fake_ld1, run_dir):
-    """盘上没有 U.in 也没关系：``-i`` 会先生成出来再跑。"""
+    """It does not matter that there is no U.in on disk: ``-i`` renders it first."""
     assert not (run_dir / "U.in").exists()
 
     result = run_one(run_dir / "input.json")
@@ -156,13 +160,15 @@ def test_run_generates_the_input_when_it_is_missing(fake_ld1, run_dir):
 
 def test_run_refuses_when_the_input_cannot_be_written(fake_ld1, run_dir,
                                                       monkeypatch):
-    """生成阶段写不进去（这里用只读目录模拟）→ 明确报错，而不是静默跳过。"""
+    """The generation stage cannot write (a read-only directory here) -> a clear
+    error instead of a silent skip.
+    """
     import pp_gen.inputs.generation as prepare_mod
 
     monkeypatch.setattr(prepare_mod, "_write",
                         lambda path, text: (False, False))
 
-    with pytest.raises(RunError, match="生成之后仍然没有输入文件"):
+    with pytest.raises(RunError, match="still no input file after generation"):
         run_one(run_dir / "input.json")
 
 
@@ -194,22 +200,24 @@ def test_run_nonzero_exit_returns_that_code(fake_ld1, run_dir):
     result = run_one(run_dir / "input.json")
 
     assert result.returncode == 3
-    assert "退出码是 3" in " ".join(result.warnings)
+    assert "exited with code 3" in " ".join(result.warnings)
 
 
 def test_run_zero_exit_with_error_marker_warns(fake_ld1, run_dir, monkeypatch):
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
     use_fake(run_dir, FAKE_LD1_ERROR)
-    monkeypatch.setenv("FAKE_LD1_EXIT", "0")        # 报了错却返回 0
+    monkeypatch.setenv("FAKE_LD1_EXIT", "0")        # it reported an error yet returned 0
     result = run_one(run_dir / "input.json")
 
     assert result.returncode == 0
-    assert result.error_hint is None                  # 退出码 0 不算 error_hint
-    assert any("退出码是 0" in w for w in result.warnings)
+    assert result.error_hint is None                  # exit code 0 is not an error_hint
+    assert any("exited with code 0" in w for w in result.warnings)
 
 
 def test_run_timeout_is_recorded_not_raised(fake_ld1, run_dir):
-    """超时只算"这一次失败"：批量扫描不该因为一个点卡住就丢掉其余记录。"""
+    """A timeout counts as a failure of this one run only: a batch scan must not
+    lose the other records because one point got stuck.
+    """
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
     use_fake(run_dir, FAKE_LD1_SLOW)
 
@@ -218,8 +226,8 @@ def test_run_timeout_is_recorded_not_raised(fake_ld1, run_dir):
     result = batch.runs[0]
     assert result.timed_out and not result.ok
     assert result.returncode is None
-    assert "已被终止" in result.exit_reason
-    assert batch.returncode == 1                       # 没退出码 -> 1
+    assert "terminated" in result.exit_reason
+    assert batch.returncode == 1                       # no exit code -> 1
 
 
 # --------------------------------------------------------------------------
@@ -242,10 +250,10 @@ def test_dry_run_without_in_warns_instead_of_failing(fake_ld1, run_dir):
 
     result = batch.runs[0]
     assert not result.executed
-    assert any("还不存在" in w for w in batch.warnings)
+    assert any("does not exist yet" in w for w in batch.warnings)
 
 def test_dry_run_writes_nothing(fake_ld1, run_dir):
-    """干跑：既不写输入也不跑；盘上那份 U.in 保持原样。"""
+    """Dry run: neither writes the input nor runs; the U.in on disk stays as it is."""
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
 
     result = run_one(run_dir / "input.json", dry_run=True)
@@ -263,8 +271,8 @@ def test_cli_run_ok(fake_ld1, run_dir, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "退出码     : 0" in out
-    assert "产物       : fake.dat" in out
+    assert "exit code  : 0" in out
+    assert "artifacts  : fake.dat" in out
 
 
 def test_cli_run_failure_returns_ld1_exit_code(fake_ld1, run_dir, capsys):
@@ -275,8 +283,8 @@ def test_cli_run_failure_returns_ld1_exit_code(fake_ld1, run_dir, capsys):
 
     assert code == 1
     out = capsys.readouterr().out
-    assert "错误       :" in out and "ld1_readin" in out
-    assert "U.out 末尾：" in out
+    assert "error      :" in out and "ld1_readin" in out
+    assert "U.out tail:" in out
 
 
 def test_cli_run_dry_run(fake_ld1, run_dir, capsys):
@@ -285,11 +293,11 @@ def test_cli_run_dry_run(fake_ld1, run_dir, capsys):
     assert cli.main(["run", "-i", str(run_dir / "input.json"), "-n"]) == 0
     assert not (run_dir / "U.out").exists()
     out = capsys.readouterr().out
-    assert "运行命令   : cd " in out and "干跑" in out
+    assert "command    : cd " in out and "dry run" in out
 
 
 def test_cli_run_generates_then_runs(fake_ld1, run_dir, capsys):
-    """``ppgen run -i input.json``：先按配置生成 U.in，再跑 ld1.x。"""
+    """``ppgen run -i input.json``: render U.in from the configuration first, then run ld1.x."""
     assert not (run_dir / "U.in").exists()
 
     code = cli.main(["run", "-i", str(run_dir / "input.json")])
@@ -297,15 +305,15 @@ def test_cli_run_generates_then_runs(fake_ld1, run_dir, capsys):
     assert code == 0
     assert (run_dir / "U.in").is_file()
     out = capsys.readouterr().out
-    assert "已按参数重新生成" in out
-    assert "退出码     : 0" in out
+    assert "rendered again from the parameters" in out
+    assert "exit code  : 0" in out
 
 
 # --------------------------------------------------------------------------
-# "到底有没有覆盖" —— 显示上必须说得清
+# "Was it overwritten or not" -- the display has to say so clearly
 # --------------------------------------------------------------------------
 def test_relative_input_path_is_reported_absolute(fake_ld1, run_dir, monkeypatch):
-    """``ppgen run -i input.json``：报告里不能出现 `run 目录 : .` 这种含糊显示。"""
+    """``ppgen run -i input.json``: the report must not show an ambiguous `run dir : .`."""
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
     monkeypatch.chdir(run_dir)
 
@@ -327,8 +335,8 @@ def test_artifacts_say_replaced_or_new(fake_ld1, run_dir):
     result = run_one(run_dir / "input.json")
 
     by_name = {a.name: a for a in result.artifacts}
-    assert by_name["fake.dat"].replaced is True         # 原来就有 -> 覆盖
-    assert by_name["fake.dat"].how == "覆盖"
+    assert by_name["fake.dat"].replaced is True         # it was already there -> overwritten
+    assert by_name["fake.dat"].how == "overwritten"
     assert by_name["fake.dat"].size == len("fake artifact\n")
 
 
@@ -337,7 +345,7 @@ def test_new_artifact_is_marked_new(fake_ld1, run_dir):
 
     result = run_one(run_dir / "input.json")
 
-    assert {a.name: a.how for a in result.artifacts}["fake.dat"] == "新建"
+    assert {a.name: a.how for a in result.artifacts}["fake.dat"] == "new"
 
 
 def test_untouched_file_is_not_an_artifact(fake_ld1, run_dir):
@@ -355,8 +363,8 @@ def test_cli_run_says_input_was_regenerated(fake_ld1, run_dir, capsys):
     assert cli.main(["run", "-i", str(run_dir / "input.json")]) == 0
 
     out = capsys.readouterr().out
-    assert "已按参数重新生成" in out and "覆盖了原来的同名文件" in out
-    assert "新建）" in out
+    assert "rendered again from the parameters" in out and "overwriting the same-named file" in out
+    assert "fake.dat (14 B, new)" in out
 
 
 def test_cli_run_dry_run_says_the_input_is_untouched(fake_ld1, run_dir, capsys):
@@ -365,12 +373,12 @@ def test_cli_run_dry_run_says_the_input_is_untouched(fake_ld1, run_dir, capsys):
     assert cli.main(["run", "-i", str(run_dir / "input.json"), "-n"]) == 0
 
     out = capsys.readouterr().out
-    assert "干跑：会按参数重新生成并覆盖" in out
+    assert "dry run: it would be rendered again from the parameters and overwritten" in out
     assert (run_dir / "U.in").read_text(encoding="utf-8") == SENTINEL_IN
 
 
 # --------------------------------------------------------------------------
-# output.json：每个任务的 exit code / exit reason / 运行目录
+# output.json: exit code / exit reason / run directory of every task
 # --------------------------------------------------------------------------
 def test_run_writes_output_json_next_to_input(fake_ld1, run_dir):
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
@@ -388,7 +396,7 @@ def test_run_writes_output_json_next_to_input(fake_ld1, run_dir):
                                   "exit_code": 0}
     task = payload["tasks"][0]
     assert task["exit_code"] == 0
-    assert task["exit_reason"] == "正常结束"
+    assert task["exit_reason"] == "finished normally"
     assert task["directory"] == str(run_dir)
     assert task["input"] == "U.in"
     assert "fake.dat" in task["artifacts"]
@@ -422,11 +430,12 @@ def test_cli_run_reports_the_output_json(fake_ld1, run_dir, capsys):
     (run_dir / "U.in").write_text(SENTINEL_IN, encoding="utf-8")
 
     assert cli.main(["run", "-i", str(run_dir / "input.json")]) == 0
-    assert "记录       : " in capsys.readouterr().out
+    assert "record     : " in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------
-# 直接跑：在当前目录跑 U.in，不读配置、不生成、不校验
+# Direct run: run U.in in the current directory, no config read, no generation,
+# no validation
 # --------------------------------------------------------------------------
 def test_classify_input_tells_config_from_direct(fake_ld1, run_dir, tmp_path):
     from pp_gen.ld1.runner import classify_input
@@ -434,10 +443,10 @@ def test_classify_input_tells_config_from_direct(fake_ld1, run_dir, tmp_path):
     assert classify_input(run_dir / "input.json") == "config"
     (tmp_path / "U.in").write_text("&input\n/\n", encoding="utf-8")
     assert classify_input(tmp_path / "U.in") == "direct"
-    # 没有 workflow 的 JSON 也当"直接跑的那份输入"
+    # JSON without a workflow also counts as "the input to run directly"
     (tmp_path / "weird.json").write_text('{"a": 1}', encoding="utf-8")
     assert classify_input(tmp_path / "weird.json") == "direct"
-    with pytest.raises(RunError, match="找不到输入文件"):
+    with pytest.raises(RunError, match="input file not found"):
         classify_input(tmp_path / "nope.in")
 
 
@@ -464,7 +473,7 @@ def test_find_direct_input_rejects_ambiguity(fake_ld1, tmp_path, monkeypatch):
     for name in ("a.in", "b.in"):
         (tmp_path / name).write_text("&input\n/\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(RunError, match="不知道该跑哪一份"):
+    with pytest.raises(RunError, match="no way to tell which to run"):
         find_direct_input()
 
 
@@ -472,12 +481,14 @@ def test_find_direct_input_without_any_in(fake_ld1, tmp_path, monkeypatch):
     from pp_gen.ld1.runner import find_direct_input
 
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(RunError, match="没有 U.in"):
+    with pytest.raises(RunError, match="no U.in in"):
         find_direct_input()
 
 
 def test_run_direct_runs_U_in_in_the_current_directory(tmp_path, monkeypatch):
-    """``cd <某个点> && ppgen run``：不读 input.json、不生成、不校验。"""
+    """``cd <some directory> && ppgen run``: no input.json is read, nothing is
+    rendered, nothing is validated.
+    """
     bin_dir = install_fake_ld1(tmp_path)
     (tmp_path / "U.in").write_text("&input\n  iswitch = 1,\n/\n",
                                    encoding="utf-8")
@@ -489,7 +500,7 @@ def test_run_direct_runs_U_in_in_the_current_directory(tmp_path, monkeypatch):
     run1 = result.runs[0]
     assert run1.in_file == tmp_path / "U.in"
     assert run1.out_file == tmp_path / "U.out"
-    assert run1.ok and (tmp_path / "fake.dat").is_file()      # cwd 就是这儿
+    assert run1.ok and (tmp_path / "fake.dat").is_file()      # the cwd is here
     assert result.output_file == tmp_path / "output.json"
     payload = json.loads(result.output_file.read_text(encoding="utf-8"))
     assert payload["direct"] is True
@@ -498,7 +509,7 @@ def test_run_direct_runs_U_in_in_the_current_directory(tmp_path, monkeypatch):
 
 
 def test_run_direct_from_an_explicit_in_file(tmp_path):
-    """``ppgen run -i U.in``：给的其实是一份 ld1.x 输入 -> 直接跑。"""
+    """``ppgen run -i U.in``: what was given is really an ld1.x input -> run it directly."""
     bin_dir = install_fake_ld1(tmp_path)
     (tmp_path / "U.in").write_text("&input\n/\n", encoding="utf-8")
 
@@ -512,7 +523,7 @@ def test_run_direct_without_ld1_is_a_clear_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(config.ENV_QE_PATH, str(tmp_path / "no-qe"))
 
-    with pytest.raises(RunError, match="没有可执行的 ld1.x"):
+    with pytest.raises(RunError, match="no executable ld1.x"):
         run(None)
 
 
@@ -537,30 +548,32 @@ def test_cli_run_direct_in_cwd(fake_ld1, tmp_path, monkeypatch, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "直接跑：没读 input.json、没生成、没校验" in out
+    assert "direct run: no input.json read, nothing rendered, nothing validated" in out
     assert (tmp_path / "U.out").is_file()
 
 
 def test_cli_run_direct_rejects_scan_filters(fake_ld1, tmp_path,
                                              monkeypatch, capsys):
-    """直接跑那份输入时，``--only`` / ``--rc``（input.json 那一套）用不上。"""
+    """For a direct run of that input, ``--only`` / ``--rc`` (the input.json flow) do not apply."""
     (tmp_path / "U.in").write_text("&input\n/\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     assert cli.main(["run", "--only", "5F"]) == 2
-    assert "用不上" in capsys.readouterr().err
+    assert "do not apply to a direct run" in capsys.readouterr().err
     assert cli.main(["run", "--rc", "1.2"]) == 2
 
 
 # --------------------------------------------------------------------------
-# 真跑 QE（slow）
+# Really run QE (slow)
 # --------------------------------------------------------------------------
 @pytest.mark.slow
 def test_run_with_real_ld1x(tmp_path, monkeypatch):
-    """真拿本机 ld1.x 跑一遍 ae_radial：产物与参考 run 的字段一致。"""
+    """Really run ae_radial through the local ld1.x: the artifacts and the fields
+    match those of the reference run.
+    """
     ld1 = Path(config.qe_binary(config.DEFAULT_QE_PATH))
     if not (ld1.is_file() and ld1.stat().st_mode & 0o111):
-        pytest.skip(f"本机没有 ld1.x：{ld1}")
+        pytest.skip(f"no ld1.x on this machine: {ld1}")
     monkeypatch.delenv(config.ENV_PARAMETERS, raising=False)
 
     write_input(tmp_path, qe_path=config.DEFAULT_QE_PATH)

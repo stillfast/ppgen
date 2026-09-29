@@ -1,12 +1,13 @@
-"""元素符号表：只用来在 ``&input`` 没写 ``atom`` 时从 ``zed`` 反推元素。
+"""Element symbol table: recovers the element from ``zed`` when ``&input`` omits ``atom``.
 
-pslibrary 那批输入全线只写 ``zed=92.0``，所以这条退路不是摆设。
+The whole pslibrary input set writes only ``zed=92.0``, so this fallback is
+not decoration.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-#: Z = 1..118 的元素符号
+#: element symbols for Z = 1..118
 SYMBOLS = (
     "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
     "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
@@ -24,7 +25,7 @@ SYMBOLS = (
 
 
 def symbol(z: float) -> Optional[str]:
-    """原子序数 -> 元素符号；不是 1..118 的整数就返回 ``None``。"""
+    """Atomic number -> element symbol; ``None`` unless it is an integer in 1..118."""
     try:
         value = float(z)
     except (TypeError, ValueError):

@@ -14,25 +14,32 @@ from ..scans.axis import format_ener, format_rcut
 
 def write_card_rcut(path: Path, label: str, rcut: float, *,
                     rcutus: Optional[float] = None) -> bool:
-    """把参数 YAML 里**该轨道的每一张**卡片的 ``rcut`` / ``rcutus`` **就地**改掉。
+    """Rewrite ``rcut`` / ``rcutus`` **in place** on **every** card of that orbital in the parameter YAML.
 
-    **同标签的卡片一起改**（如多投影子的两张 ``5F``）：:func:`apply` 生成扫描点
-    时就是按标签联动的，写回也必须一样 —— 否则写回去的"最佳值"只落在第一张上，
-    YAML 里两张 ``5F`` 从此不一致，而下次扫描的中心取第一张、两个扫描点又都把
-    两张改成同一个值：文件与实际跑的点对不上账，谁看都糊涂。
+    **Cards sharing a label change together** (e.g. the two ``5F`` cards of
+    multiple projection operators): :func:`apply` links them by label when it
+    builds the scan points, so writing back must do the same -- otherwise the
+    "best value" written back lands on the first card only, the two ``5F``
+    cards in the YAML disagree from then on, and while the next scan takes its
+    center from the first card its scan points again set both to one value: the
+    file and the points actually run no longer match, which confuses everybody.
 
-    只重写这些行里的那两个数：缩进、引号、其它列、行尾注释、文件其余部分一律
-    原样保留 —— 这些 yml 是手写的，整份重排会把注释和排版都弄丢。
-    ``rcutus`` 不写就与 ``rcut`` 同值（``ld1.x`` 要求 ``rcut <= rcutus``）。
+    Only those two numbers on those lines are rewritten: indentation, quotes,
+    the other columns, trailing comments and the rest of the file stay exactly
+    as they are -- these yml files are hand-written, and reformatting them
+    would lose comments and layout. Without ``rcutus`` it takes the value of
+    ``rcut`` (``ld1.x`` requires ``rcut <= rcutus``).
 
-    所有同标签卡片本来就都是这个值就一个字都不写，返回 ``False``；找不到该轨道
-    的列表式卡片会报错（映射写法的卡片这里改不了，得手动改）。
+    When all same-label cards already hold this value nothing is written and
+    ``False`` is returned; a missing list-style card for that orbital is an
+    error (a mapping-style card cannot be changed here and needs a manual
+    edit).
     """
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ParameterError(f"读不了参数文件 {path}：{exc}") from exc
+        raise ParameterError(f"cannot read {path}: {exc}") from exc
 
     target = format_rcut(rcut)
     new_rcutus = target if rcutus is None else format_rcut(rcutus)
@@ -45,9 +52,9 @@ def write_card_rcut(path: Path, label: str, rcut: float, *,
         fields = [item.strip() for item in match.group("body").split(",")]
         if len(fields) <= _RCUTUS_COLUMN or _unquote(fields[0]) != label:
             continue
-        hits.append(index)                              # 同标签的卡片全都要改
+        hits.append(index)                              # every card sharing the label
         if (fields[_RCUT_COLUMN], fields[_RCUTUS_COLUMN]) == (target, new_rcutus):
-            continue                                    # 这张已经是这个值
+            continue                                    # this one already holds it
         fields[_RCUT_COLUMN] = target
         fields[_RCUTUS_COLUMN] = new_rcutus
         newline = "\n" if raw.endswith("\n") else ""
@@ -57,32 +64,35 @@ def write_card_rcut(path: Path, label: str, rcut: float, *,
     if not hits:
         if card_labels(text):
             raise ParameterError(
-                f"参数文件 {path} 里没有轨道 {label} 的**列表式**卡片"
-                f"（这份文件里能认出的卡片是 {card_labels(text)}）；"
-                f"映射写法（{{'label': …}}）的卡片请手动改 rcut")
-        raise ParameterError(f"参数文件 {path} 里找不到轨道 {label} 的卡片")
+                f"parameter file {path} has no **list-style** card for orbital {label} "
+                f"(cards recognised in this file: {card_labels(text)}); "
+                f"a mapping-style card ({{'label': ...}}) must be edited by hand")
+        raise ParameterError(f"no card for orbital {label} in parameter file {path}")
 
     if "".join(lines) == text:
-        return False                                    # 同标签卡片都已经这个值
+        return False                                    # all same-label cards hold it
     try:
         path.write_text("".join(lines), encoding="utf-8")
     except OSError as exc:
-        raise ParameterError(f"写不了参数文件 {path}：{exc}") from exc
+        raise ParameterError(f"cannot write {path}: {exc}") from exc
     return True
 
 
 def write_card_ener(path: Path, card_index: int, label: str, ener: float) -> bool:
-    """把参数 YAML 里**第 ``card_index`` 张**卡片的 ``ener`` 就地改掉。
+    """Rewrite ``ener`` in place on the ``card_index``-th card of the parameter YAML.
 
-    与 :func:`write_card_rcut` 一样只重写这一行里的那一个数，缩进、引号、其它
-    列、行尾注释、文件其余部分原样保留。同一标签有多张卡片时靠序号区分，
-    标签只是用来核对"没改错行"。值没变就一个字都不写，返回 ``False``。
+    Like :func:`write_card_rcut` only that single number on that line is
+    rewritten; indentation, quotes, the other columns, trailing comments and
+    the rest of the file stay as they are. When one label appears several times
+    the index tells the cards apart and the label only verifies that the right
+    line is touched. Nothing is written when the value already matches and
+    ``False`` is returned.
     """
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ParameterError(f"读不了参数文件 {path}：{exc}") from exc
+        raise ParameterError(f"cannot read {path}: {exc}") from exc
 
     target = format_ener(ener)
     lines = text.splitlines(keepends=True)
@@ -99,10 +109,10 @@ def write_card_ener(path: Path, card_index: int, label: str, ener: float) -> boo
             continue
         if _unquote(fields[0]) != label:
             raise ParameterError(
-                f"参数文件 {path} 里第 {card_index} 张卡片是 "
-                f"{_unquote(fields[0])}，不是 {label} —— 文件被改过了？")
+                f"card {card_index} in parameter file {path} is "
+                f"{_unquote(fields[0])}, not {label} -- was the file edited?")
         if fields[_ENER_COLUMN] == target:
-            return False                               # 已经是这个值
+            return False                               # already this value
         fields[_ENER_COLUMN] = target
         newline = "\n" if raw.endswith("\n") else ""
         lines[index] = (f"{match.group('indent')}[{', '.join(fields)}]"
@@ -110,9 +120,9 @@ def write_card_ener(path: Path, card_index: int, label: str, ener: float) -> boo
         try:
             path.write_text("".join(lines), encoding="utf-8")
         except OSError as exc:
-            raise ParameterError(f"写不了参数文件 {path}：{exc}") from exc
+            raise ParameterError(f"cannot write {path}: {exc}") from exc
         return True
 
     raise ParameterError(
-        f"参数文件 {path} 里没有第 {card_index} 张列表式卡片"
-        f"（这份文件里能认出的卡片是 {card_labels(text)}）")
+        f"parameter file {path} has no list-style card number {card_index} "
+        f"(cards recognised in this file: {card_labels(text)})")

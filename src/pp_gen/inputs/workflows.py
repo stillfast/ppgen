@@ -1,8 +1,9 @@
-"""工作流登记表：工作流名 -> 它需要哪些参数组、要不要扫描。
+"""Workflow registry: workflow name -> which parameter groups it needs, whether it scans.
 
-``input.json`` 里的 ``workflow`` 字段由此获得实际含义。写错工作流名、给工作流配了
-它不用的参数组，都会在这里被拦住 —— 否则渲染出来的段对这次计算毫无作用，却会让
-``ld1.x`` 读到不该读的东西。
+The ``workflow`` field of ``input.json`` gets its meaning from this table. A
+misspelled workflow name, or a parameter group the workflow does not use, is
+rejected here -- otherwise the rendered section has no effect on this run yet
+makes ``ld1.x`` read something it should not.
 """
 from __future__ import annotations
 
@@ -14,17 +15,21 @@ from ..core.errors import InputError
 
 @dataclass(frozen=True)
 class Workflow:
-    """一个工作流。
+    """One workflow.
 
-    * ``groups``：``parameters`` 里必须**不多不少**正好出现的参数组。
-    * ``namelist_groups``：其中哪些组是 ``ld1.x`` 的 namelist 段（其余是工作流
-      自己的数据，如 ``rc_scan_range``）。
-    * ``scan_group``：非空表示这个工作流要**扫一批点**（每个点一份输入），
-      值就是那个存放扫描范围的辅助参数组名。
-    * ``scan_kind``：扫的是什么 —— ``"rcut"``（逐轨道扫截断半径）、``"ener"``
-      （逐张 ``occ=0`` 卡片扫参考能量）、``"rcloc"``（扫 ``&inputp`` 的局域势
-      芯半径）、``"rlderiv"``（扫 ``&input`` 的对数导数半径）或 ``"configts"``
-      （逐组态测同一个 PP，见 :mod:`pp_gen.report` 的迁移性表）。
+    * ``groups``: the parameter groups that must appear in ``parameters`` --
+      exactly those, no more and no fewer.
+    * ``namelist_groups``: which of them are ``ld1.x`` namelist sections (the
+      others are the workflow's own data, such as ``rc_scan_range``).
+    * ``scan_group``: non-empty means this workflow scans **a batch of points**
+      (one input per point); the value is the name of the auxiliary parameter
+      group holding the scan range.
+    * ``scan_kind``: what is scanned -- ``"rcut"`` (the cutoff radius, per
+      orbital), ``"ener"`` (the reference energy, per ``occ=0`` card),
+      ``"rcloc"`` (the core radius of the local potential in ``&inputp``),
+      ``"rlderiv"`` (the logarithmic derivative radius in ``&input``) or
+      ``"configts"`` (the same PP against each test configuration, see the
+      transferability table produced by :mod:`pp_gen.reporting.report`).
     """
 
     name: str
@@ -33,7 +38,8 @@ class Workflow:
     namelist_groups: Optional[Tuple[str, ...]] = None
     scan_group: Optional[str] = None
     scan_kind: str = "rcut"
-    #: 可以不写的参数组：``configts`` 这种"参数文件里已经列好了就不必再扫"的
+    #: Parameter groups that may be omitted: for ``configts``, configurations
+    #: already listed in the parameter file need not be scanned.
     optional_groups: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -52,26 +58,31 @@ class Workflow:
         return self.scan_group is not None and self.scan_kind == "configts"
 
 
-#: 已登记的工作流。加新工作流就在这里加一条，不要在 CLI 里写 if。
+#: Registered workflows. Adding a workflow means adding one entry here, not an
+#: "if" in the CLI.
 WORKFLOWS: Dict[str, Workflow] = {
     "ld1.x": Workflow(
         name="ld1.x",
         groups=("input",),
-        description="普通 ld1.x 运行（一次一份输入：全电子 AE、生成赝势…都算；"
-                    "用哪个参数文件由 parameters.input 指定）",
+        description="plain ld1.x run (one input at a time: all-electron AE, "
+                    "pseudopotential generation, ... -- which parameter file is "
+                    "used comes from parameters.input)",
     ),
     "rc_scan": Workflow(
         name="rc_scan",
         groups=("input", "rc_scan_range"),
-        description="逐轨道扫 rcut（iswitch=3 生成赝势，每个扫描点一份输入）",
+        description="scan rcut per orbital (iswitch=3 pseudopotential generation, "
+                    "one input per scan point)",
         namelist_groups=("input",),
         scan_group="rc_scan_range",
     ),
     "configts": Workflow(
         name="configts",
         groups=("input", "configts"),
-        description="逐个测试组态跑 ld1.x（生成 PP 的 config 固定不动，只换 "
-                    "&test 的 configts(1)）—— 收集 AE/PS 能级与 ΔE、δ（迁移性）",
+        description="run ld1.x once per test configuration (the config used to "
+                    "generate the PP stays fixed, only configts(1) of "
+                    "&test changes) -- collect the AE/PS levels plus ΔE, δ "
+                    "(transferability)",
         namelist_groups=("input",),
         scan_group="configts",
         scan_kind="configts",
@@ -80,8 +91,10 @@ WORKFLOWS: Dict[str, Workflow] = {
     "rlderiv": Workflow(
         name="rlderiv",
         groups=("input", "rlderiv"),
-        description="扫 &input 的 rlderiv（对数导数的参考半径，每个扫描点一份输入；"
-                    "iswitch=3）—— 它只决定极点落在哪个能量上，不改赝势",
+        description="scan rlderiv of &input (the reference radius of the "
+                    "logarithmic derivative, one input per scan point; "
+                    "iswitch=3) -- it only decides which energy the pole falls "
+                    "on, it does not change the pseudopotential",
         namelist_groups=("input",),
         scan_group="rlderiv",
         scan_kind="rlderiv",
@@ -89,8 +102,10 @@ WORKFLOWS: Dict[str, Workflow] = {
     "rcloc_scan": Workflow(
         name="rcloc_scan",
         groups=("input", "rcloc_scan_range"),
-        description="扫 &inputp 的 rcloc（局域势的芯半径，每个扫描点一份输入；"
-                    "iswitch=3）—— 这个量影响整份赝势，判据看全部通道",
+        description="scan rcloc of &inputp (the core radius of the local "
+                    "potential, one input per scan point; iswitch=3) -- this "
+                    "quantity affects the whole pseudopotential, so the criterion "
+                    "looks at every channel",
         namelist_groups=("input",),
         scan_group="rcloc_scan_range",
         scan_kind="rcloc",
@@ -98,8 +113,9 @@ WORKFLOWS: Dict[str, Workflow] = {
     "energy_scan": Workflow(
         name="energy_scan",
         groups=("input", "energy_scan_range"),
-        description="给 occ=0 的额外投影算子卡片扫 ener（多投影子的参考能量，"
-                    "每个扫描点一份输入；iswitch=3）",
+        description="scan ener of the extra projector cards with occ=0 (the "
+                    "reference energy of the extra projectors, one input per "
+                    "scan point; iswitch=3)",
         namelist_groups=("input",),
         scan_group="energy_scan_range",
         scan_kind="ener",
@@ -108,18 +124,18 @@ WORKFLOWS: Dict[str, Workflow] = {
 
 
 def get(name: str) -> Workflow:
-    """按名字取工作流；不认识就报错并列出已知的。"""
+    """Look up a workflow by name; an unknown name is an error listing the known ones."""
     workflow = WORKFLOWS.get(name)
     if workflow is None:
-        known = "、".join(sorted(WORKFLOWS)) or "（无）"
+        known = ", ".join(sorted(WORKFLOWS)) or "(none)"
         raise InputError(
-            f"input.json 里的 workflow='{name}' 没有登记；已知工作流：{known}。"
-            f"（登记表在 pp_gen/workflows.py）")
+            f"workflow='{name}' in input.json is not registered; known workflows: "
+            f"{known}. (The registry lives in pp_gen/inputs/workflows.py)")
     return workflow
 
 
 def check_groups(workflow: Workflow, groups) -> None:
-    """``parameters`` 的键集合必须与工作流要的组对得上（可选组可以不写）。"""
+    """The keys of ``parameters`` must match the groups the workflow wants (optional groups may be omitted)."""
     given = set(groups)
     want = set(workflow.groups)
     optional = set(workflow.optional_groups)
@@ -127,11 +143,14 @@ def check_groups(workflow: Workflow, groups) -> None:
     extra = sorted(given - want)
     if missing:
         raise InputError(
-            f"工作流 '{workflow.name}' 需要参数组 {list(workflow.groups)}"
-            + (f"（其中 {sorted(optional)} 可以不写）" if optional else "")
-            + f"，但 input.json 的 parameters 里缺少：{missing}")
+            f"workflow '{workflow.name}' needs the parameter groups "
+            f"{list(workflow.groups)}"
+            + (f" (of which {sorted(optional)} may be omitted)" if optional else "")
+            + f", but the parameters of input.json are missing: {missing}")
     if extra:
         raise InputError(
-            f"工作流 '{workflow.name}' 只用参数组 {list(workflow.groups)}，"
-            f"input.json 的 parameters 里多出了：{extra}。"
-            f"多余参数组会被渲染成 ld1.x 不该读的段，所以这里直接拦下")
+            f"workflow '{workflow.name}' only uses the parameter groups "
+            f"{list(workflow.groups)}, but the parameters of input.json have "
+            f"extra ones: {extra}. "
+            f"Extra parameter groups would be rendered into sections ld1.x "
+            f"should not read, so they are rejected here")

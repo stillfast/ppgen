@@ -12,26 +12,32 @@ from ..ld1.wavefunctions import transform
 
 
 def _fix_log_ylim(curves, spec: PlotSpec):
-    """对数纵轴上的 ``ylim`` 如果不可用，就**丢掉它、按数据自动取值**，并警告。
+    """If ``ylim`` is unusable on a logarithmic y axis, **drop it, let the data
+    decide the range**, and warn.
 
-    对数轴没有 0 和负数，所以 ``ylim`` 的下限非正时这个范围根本落不了地。
-    这里不替用户改成一个"猜"出来的下限（纵轴的合理下限取决于数据，猜出来
-    也是误导），而是整段交回给 matplotlib 按数据自动定，并说明原因 ——
-    与横轴不同：那边有参考图定下的约定下限（0.01 Å），纵轴没有这种约定。
+    A log axis has neither 0 nor negative values, so a non-positive lower bound
+    makes the range impossible to honor. Rather than inventing a "guessed" lower
+    bound (a sensible lower bound for the y axis depends on the data, so a guess
+    would be misleading), the whole range is handed back to matplotlib to derive
+    from the data, and the reason is stated. The x axis is different: there the
+    reference figure fixes a conventional lower bound (0.01 Å), whereas the y
+    axis has no such convention.
 
-    * 上限低于数据最大值这类"合法但会裁掉很多点"的情况**不动** ylim，
-      只由 :func:`_clipped_fraction_warnings` 报出裁掉多少。
+    * Cases such as "legal but clips many points" (upper bound below the data
+      maximum) leave ``ylim`` **untouched**; only
+      :func:`_clipped_fraction_warnings` reports how much is clipped.
     """
     ylim = spec.figure.ylim
     if spec.figure.yscale != "log" or ylim is None or ylim[0] > 0:
         return ylim, []
     return None, [
-        f"ylim={list(ylim)} 在对数纵轴上没法用（下限必须为正），"
-        f"已忽略它、按数据自动取值；要固定范围就把 ylim 写成两个正数"]
+        f"ylim={list(ylim)} cannot be used on a logarithmic y axis (the lower "
+        f"bound must be positive); it was ignored and the range is taken from "
+        f"the data -- write ylim as two positive numbers to fix the range"]
 
 
 def _clipped_fraction_warnings(curves, spec: PlotSpec) -> List[str]:
-    """按 ``ylim`` 裁掉了多少点 —— 范围设太窄时这比"整条看不见"更常见。"""
+    """How many points ``ylim`` clips -- far more common than a whole invisible curve."""
     if spec.figure.ylim is None:
         return []
     low, high = spec.figure.ylim
@@ -45,16 +51,16 @@ def _clipped_fraction_warnings(curves, spec: PlotSpec) -> List[str]:
     outside = total - inside
     if outside / total < 0.2:
         return []
-    return [f"按 ylim={[low, high]} 有 {outside / total * 100:.0f}% 的点被裁掉"
-            f"（{outside}/{total}）——范围可能设窄了"]
+    return [f"ylim={[low, high]} clips {outside / total * 100:.0f}% of the points"
+            f" ({outside}/{total}) -- the range may be too narrow"]
 
 
 def _write_csvs(spec: PlotSpec, files, *, outdir: Optional[Path],
                 write: bool) -> Tuple[Tuple[Path, ...], int]:
-    """写极值 CSV（每个 wfc 一份），返回 ``(路径, 总行数)``。
+    """Write the extrema CSV files (one per wfc file) and return ``(paths, rows)``.
 
-    只在 ``figure.csv_name`` 开着时才写；``--dry-run`` 时算出路径与行数但
-    不落盘。
+    Written only when ``figure.csv_name`` is enabled; with ``--dry-run`` the
+    paths and the row count are computed but nothing is written to disk.
     """
     if not spec.figure.csv_enabled:
         return (), 0
@@ -62,7 +68,8 @@ def _write_csvs(spec: PlotSpec, files, *, outdir: Optional[Path],
     multi = len(files) > 1
     paths: List[Path] = []
     total = 0
-    # 多文件时每个文件一份：不同文件的同名态在同一张表里分不清
+    # with several files there is one CSV each: equally named states from
+    # different files cannot be told apart inside one table
     packed = [(wfc, spec.data.labels[index]) for index, wfc in enumerate(files)]
     for wfc, label in packed:
         items = []
@@ -81,7 +88,7 @@ def _write_csvs(spec: PlotSpec, files, *, outdir: Optional[Path],
 
 
 def _clipping_warnings(curves, spec: PlotSpec) -> List[str]:
-    """按 ``ylim`` 有整条曲线看不见时提醒 —— 免得以为"少画了几条"。"""
+    """Warn when ``ylim`` hides a whole curve -- so it is not mistaken for a missing curve."""
     if spec.figure.ylim is None or spec.figure.yscale == "log":
         return []
     low, high = spec.figure.ylim
@@ -93,23 +100,25 @@ def _clipping_warnings(curves, spec: PlotSpec) -> List[str]:
         if (y < low).all() or (y > high).all():
             hidden.append(curve.state)
     if hidden:
-        return [f"按 ylim={[low, high]}，这些态整条都在范围外、图上看不到："
-                f"{sorted(set(hidden))}"]
+        return [f"with ylim={[low, high]} these states lie entirely outside the "
+                f"range and are invisible in the figure: {sorted(set(hidden))}"]
     return []
 
 
 def _log_x_warnings(files, spec: PlotSpec) -> List[str]:
-    """对数横轴：r<=0 的点画不出来，丢了要说一声。"""
+    """Logarithmic x axis: points with r<=0 cannot be drawn, so say when they are dropped."""
     if spec.figure.xscale != "log":
         return []
     dropped = sum(int((wfc.r_bohr <= 0).sum()) for wfc in files)
     if not dropped:
         return []
-    return [f"横轴是对数轴，{dropped} 个 r≤0 的网格点画不出来（已跳过）"]
+    return [f"the x axis is logarithmic, so {dropped} grid points with r≤0 cannot "
+            f"be drawn (skipped)"]
 
 
 def _range_warnings(files, spec: PlotSpec) -> List[str]:
-    """数据范围明显超出 xlim 时提一句（不是错，只是别以为数据只有这一小段）。"""
+    """Mention when the data range clearly exceeds xlim (not an error, just avoid
+    assuming the data stops there)."""
     if spec.figure.xlim is None:
         return []
     warnings: List[str] = []
@@ -118,9 +127,10 @@ def _range_warnings(files, spec: PlotSpec) -> List[str]:
                 else wfc.r_max_angstrom)
         if edge < spec.figure.xlim[1]:
             warnings.append(
-                f"{wfc.path.name} 的网格只到 {edge:.2f}"
-                f"{' bohr' if spec.figure.x_unit == 'bohr' else ' Å'}，"
-                f"比 xlim 上限 {spec.figure.xlim[1]:g} 小 —— 曲线上不会画到右边框")
+                f"the grid of {wfc.path.name} only reaches {edge:.2f}"
+                f"{' bohr' if spec.figure.x_unit == 'bohr' else ' Å'}, "
+                f"less than the xlim upper bound {spec.figure.xlim[1]:g} -- the "
+                f"curve will not reach the right edge")
     return warnings
 
 

@@ -22,24 +22,24 @@ from .settings import CONFIGTS_KEY, RCLOC_KEY, RCLOC_SECTION, RUNS_DIR
 
 @dataclass(frozen=True)
 class ScanPoint:
-    """一个扫描点：把 ``orbital`` 的 rcut 定成 ``rcut``。"""
+    """One scan point: fixes ``rcut`` of ``orbital`` to ``rcut``."""
 
     orbital: str
     rcut: float
     offset: float
-    #: 相对 run 目录的落盘目录，如 ``runs/5F/rc_1p0``
+    #: directory written under the run directory, e.g. ``runs/5F/rc_1p0``
     relative_dir: Path
-    #: 扫的是哪一列（默认 ``rcut``；``energy_scan`` 用 :class:`EnergyPoint`）
+    #: which column is scanned (``rcut`` by default; ``energy_scan`` uses :class:`EnergyPoint`)
     axis: Axis = RCUT_AXIS
 
     @property
     def value(self) -> float:
-        """这个点的扫描值（通用名，报告/更新用它，不必管是 rcut 还是 ener）。"""
+        """The scan value of this point (generic name used by the report and ``update``)."""
         return self.rcut
 
     @property
     def group(self) -> str:
-        """``update: true`` 时"一次只动一个变量"的那一组（rc 扫描 = 轨道名）。"""
+        """Group that ``update: true`` moves one variable at a time (an rc scan: the orbital name)."""
         return self.orbital
 
     @property
@@ -53,28 +53,30 @@ class ScanPoint:
 
 @dataclass(frozen=True)
 class EnergyPoint:
-    """一个"能量扫描"点：把某张 ``occ=0`` 卡片的 ``ener`` 定成 ``ener``。
+    """One "energy scan" point: fixes ``ener`` of an ``occ=0`` card to ``ener``.
 
-    与 :class:`ScanPoint`（扫 rcut）平行：``energy_scan`` 工作流给每个
-    ``occ=0`` 的额外投影算子卡片扫一个 ``ener`` 范围，每个点一份 ``U.in``，
-    落在 ``runs/<卡片键>/ener_<值>/`` 下。
+    Parallel to :class:`ScanPoint` (which scans rcut): the ``energy_scan``
+    workflow scans an ``ener`` range for every extra projection operator card
+    with ``occ=0``, one ``U.in`` per point, under
+    ``runs/<card key>/ener_<value>/``.
 
-    卡片键（``key``）：标签在整套卡片里**唯一**时就是标签（``5F``），
-    同一个标签有多张（多投影子：``5F`` 出现两次）时带序号 ``5F-2``
-    —— 扫的是哪一张卡片必须一眼能认出来。
+    Card key (``key``): the label itself when that label is **unique** in the
+    card set (``5F``), or the label with an index when the same label appears
+    several times (multiple projection operators: ``5F`` twice -> ``5F-2``) --
+    which card is being scanned has to be obvious at a glance.
     """
 
     key: str
-    #: 卡片标签（报告里按它分组、极点看它对应的通道）
+    #: card label (the report groups by it, poles use its channel)
     orbital: str
-    #: 卡片第 3 列的 ``l``（比按标签猜通道可靠）
+    #: ``l`` from column 3 of the card (more reliable than guessing from the label)
     channel: Optional[int]
     ener: float
     offset: float
     relative_dir: Path
-    #: 在 ``orbitals`` 列表里的位置（1 开始）—— ``apply_energy`` 按它定位卡片
+    #: position in the ``orbitals`` list (1-based) -- ``apply_energy`` locates the card by it
     card_index: int
-    #: 这张卡片现在的 ``ener``（也就是扫描中心）
+    #: current ``ener`` of this card, i.e. the scan center
     center: float = 0.0
     axis: Axis = ENER_AXIS
 
@@ -97,43 +99,45 @@ class EnergyPoint:
 
 @dataclass(frozen=True)
 class NamelistPoint:
-    """一个"namelist 标量扫描"点：把 ``&<section>`` 里的 ``<key>`` 定成 ``value``。
+    """One "namelist scalar scan" point: fixes ``<key>`` in ``&<section>`` to ``value``.
 
-    ``rcloc_scan`` 用它扫 ``&inputp`` 的 ``rcloc``（局域势的芯半径）。与
-    :class:`ScanPoint` / :class:`EnergyPoint` 平行：一个值一个点、一个点一份
-    ``U.in``，落在 ``runs/<key>/<tag>/`` 下（如 ``runs/rcloc/rcloc_2p5/U.in``）。
+    ``rcloc_scan`` uses it to scan ``rcloc`` of ``&inputp`` (the core radius of
+    the local potential). Parallel to :class:`ScanPoint` / :class:`EnergyPoint`:
+    one point per value, one ``U.in`` per point, under ``runs/<key>/<tag>/``
+    (e.g. ``runs/rcloc/rcloc_2p5/U.in``).
 
-    这类量**只影响整份赝势**（所有通道），没有"被扫的那个轨道/卡片"这一说，
-    所以 ``channel`` 是 ``None``：判据看**全部通道**（极点全重合 + ΔE 合计 +
-    池化的 ``|ΔL|`` 中位数）。
+    Such a quantity **affects the whole pseudopotential** (every channel), so
+    there is no "scanned orbital/card": ``channel`` is ``None`` and the criteria
+    look at **all channels** (every pole coincides + summed ΔE + pooled median
+    ``|ΔL|``).
     """
 
     key: str
     value: float
     offset: float
     relative_dir: Path
-    #: 它住在哪个 namelist 段（``inputp``）
+    #: namelist section it lives in (``inputp``)
     section: str = RCLOC_SECTION
     axis: Axis = RCLOC_AXIS
 
     @property
     def orbital(self) -> str:
-        """报告/记录里的名字（``rcloc``）。"""
+        """Name used in the report and in records (``rcloc``)."""
         return self.key
 
     @property
     def group(self) -> str:
-        """``update: true`` 的分组名 —— 这类量只有一组。"""
+        """Group name for ``update: true``: such a quantity always forms a single group."""
         return self.key
 
     @property
     def channel(self) -> None:
-        """没有"被扫的通道"：判据按全部通道池化（见类文档）。"""
+        """No scanned channel: the criteria pool all channels (see the class docstring)."""
         return None
 
     @property
     def channels(self) -> Tuple[int, ...]:
-        """空元组 = 所有通道都算（``measure`` 的约定）。"""
+        """An empty tuple means every channel counts (the ``measure`` convention)."""
         return ()
 
     @property
@@ -147,18 +151,20 @@ class NamelistPoint:
 
 @dataclass(frozen=True)
 class ConfigPoint:
-    """一个"测试组态"扫描点：把 ``&test`` 的 ``configts(1)`` 换成 ``config``。
+    """One "test configuration" scan point: replaces ``configts(1)`` of ``&test`` with ``config``.
 
-    与 :class:`ScanPoint`（扫 rcut）平行：`configts` 工作流一个组态一个点，
-    每个点一份 ``U.in``，落在 ``runs/<标签>/`` 下。
+    Parallel to :class:`ScanPoint` (which scans rcut): the ``configts`` workflow
+    uses one point per configuration, one ``U.in`` per point, under
+    ``runs/<label>/``.
     """
 
     config: str
-    #: 在 ``configts`` 列表里的序号（1 开始）
+    #: index in the ``configts`` list (1-based)
     index: int
     relative_dir: Path
-    #: 要测的那份**固定**赝势（``&test`` 的 ``file_pseudo``）—— 这个工作流必须
-    #: 测同一个 PP，否则 PS 总能不可比（见 apply_config 的说明）
+    #: the **fixed** pseudopotential under test (``file_pseudo`` of ``&test``):
+    #: this workflow must test one and the same PP, otherwise PS total energies
+    #: are not comparable (see the notes on apply_config)
     file_pseudo: str = ""
 
     @property
@@ -171,49 +177,53 @@ class ConfigPoint:
 
     @property
     def n_electrons(self) -> int:
-        """这个组态里的价电子数（``5f3 6s2 …`` 各位数字相加）。"""
+        """Valence electron count of this configuration (sum of the digits in ``5f3 6s2 ...``)."""
         return config_electrons(self.config)
 
 
 def centers_from_cards(cards: Sequence[Any], *,
                        warnings: Optional[List[str]] = None) -> Dict[str, float]:
-    """从 ``orbitals`` 卡片取每个轨道的 rcut —— 这就是扫描中心。
+    """Scan centers: the rcut of each orbital, taken from the ``orbitals`` cards.
 
-    卡片可以是列表（``[label, n, l, occ, ener, rcut, rcutus, jj]``）或映射
-    （``{"label": "5F", "rcut": 1.0641, …}``）。中心不必四舍五入：扫描值就是
-    中心 + 偏移，``rcut`` 用了多少位小数都行。
+    A card may be a list (``[label, n, l, occ, ener, rcut, rcutus, jj]``) or a
+    mapping (``{"label": "5F", "rcut": 1.0641, ...}``). A center needs no
+    rounding: a scan value is center + offset, so ``rcut`` may carry any number
+    of decimals.
 
-    **同一个标签出现多次**（多投影子：给同一个 l 再挂一张 ``occ=0`` 的卡片）时
-    取**第一张**当中心 —— 扫描点与 ``update`` 都会把同标签的卡片一起改成同一个
-    值（见 :func:`write_card_rcut`），所以"扫描中心"和"被更新的值"是同一张卡；
-    后几张若写了不同的 rcut 会提醒一句（同一个态的两个投影算子本该同 r_c）。
+    When **one label appears several times** (multiple projection operators: a
+    second ``occ=0`` card for the same l), the **first** card gives the center --
+    scan points and ``update`` rewrite all cards of that label to the same value
+    (see :func:`write_card_rcut`), so "the scan center" and "the updated value"
+    are the same card. Cards that carry a different rcut raise a warning (two
+    projection operators of one state should share r_c).
     """
     centers: Dict[str, float] = {}
     if not isinstance(cards, (list, tuple)) or not cards:
-        raise ParameterError("参数里没有 orbitals 卡片，算不出扫描中心")
+        raise ParameterError("no orbitals cards in the parameters, cannot derive the scan centers")
     for index, card in enumerate(cards, 1):
         if isinstance(card, dict):
             label, raw = card.get("label"), card.get("rcut")
         elif isinstance(card, (list, tuple)) and len(card) > _RCUT_COLUMN:
             label, raw = card[0], card[_RCUT_COLUMN]
         else:
-            raise ParameterError(f"第 {index} 张卡片读不出 rcut：{card!r}")
+            raise ParameterError(f"cannot read rcut from card {index}: {card!r}")
         if not isinstance(label, str) or not label.strip():
-            raise ParameterError(f"第 {index} 张卡片的标签不对：{label!r}")
+            raise ParameterError(f"card {index} has a bad label: {label!r}")
         if raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise ParameterError(
-                f"第 {index} 张卡片（{label}）的 rcut 不是数：{raw!r}")
+                f"card {index} ({label}) has a non-numeric rcut: {raw!r}")
         name = label.strip()
         if name not in centers:
             centers[name] = float(raw)
         elif (warnings is not None
               and abs(centers[name] - float(raw)) > 1e-12):
             warnings.append(
-                f"{name} 有不止一张卡片（多投影子），而且它们写的 rcut 不一样："
-                f"扫描中心按第一张的 {centers[name]:g}，第 {index} 张写的是 "
-                f"{float(raw):g}。扫描点与 update 会把同标签的卡片一起改成同一个"
-                f"值，这张上写的 {float(raw):g} 会被覆盖；想让两张各用各的 r_c "
-                f"就得给它们不同的标签")
+                f"{name} has more than one card (multiple projection operators) "
+                f"and they disagree on rcut: the scan center uses the first one, "
+                f"{centers[name]:g}, while card {index} says {float(raw):g}. Scan "
+                f"points and update rewrite all cards of that label to the same "
+                f"value, so {float(raw):g} would be overwritten; give the cards "
+                f"different labels to keep their own r_c")
     return centers
 
 
@@ -221,24 +231,25 @@ def points(centers: Mapping[str, float], rc_range: Sequence[float], *,
            runs_dir: str = RUNS_DIR,
            only: Optional[Sequence[str]] = None,
            rc: Optional[Sequence[float]] = None) -> List[ScanPoint]:
-    """算出全部扫描点（可按轨道名 / rcut 值过滤）。
+    """Compute every scan point (filterable by orbital name / rcut value).
 
-    ``centers`` 是"轨道 -> 中心 rcut"，来自 ``input`` 参数里的 ``orbitals``
-    卡片（见 :func:`centers_from_cards`）。``only`` / ``rc`` 就是 CLI 的
-    ``--only`` / ``--rc``：给长扫描（55 个点）重跑单点时用得上。
+    ``centers`` maps "orbital -> center rcut" and comes from the ``orbitals``
+    cards of the ``input`` parameters (see :func:`centers_from_cards`).
+    ``only`` / ``rc`` are the CLI options ``--only`` / ``--rc``, useful to rerun
+    a single point of a long scan (55 points).
     """
     if not isinstance(centers, Mapping) or not centers:
         raise ParameterError(
-            f"扫描中心（轨道 -> rcut）不能为空，实际是 {centers!r}；"
-            f"它来自 input 参数里的 orbitals 卡片")
+            f"scan centers (orbital -> rcut) must not be empty, got {centers!r}; "
+            f"they come from the orbitals cards of the input parameters")
     steps = offsets(rc_range)
 
     wanted_orbitals = list(only) if only else list(centers)
     unknown = [name for name in wanted_orbitals if name not in centers]
     if unknown:
         raise ParameterError(
-            f"--only 里的轨道 {unknown} 不在 orbitals 卡片里；"
-            f"可选：{sorted(centers)}")
+            f"orbitals {unknown} from --only are not in the orbitals cards; "
+            f"available: {sorted(centers)}")
 
     out: List[ScanPoint] = []
     for orbital in wanted_orbitals:
@@ -250,8 +261,8 @@ def points(centers: Mapping[str, float], rc_range: Sequence[float], *,
                 continue
             if value <= 0:
                 raise ParameterError(
-                    f"{orbital} 的扫描点 rcut={value:g} 不是正数"
-                    f"（中心 {center:g} + 偏移 {offset:g}）")
+                    f"scan point rcut={value:g} of {orbital} is not positive "
+                    f"(center {center:g} + offset {offset:g})")
             out.append(ScanPoint(orbital=orbital, rcut=value, offset=offset,
                                  relative_dir=Path(runs_dir) / orbital
                                  / rc_label(value)))
@@ -259,27 +270,30 @@ def points(centers: Mapping[str, float], rc_range: Sequence[float], *,
         available = sorted({round(float(centers[orbital]) + offset, 10)
                             for orbital in wanted_orbitals for offset in steps})
         raise ParameterError(
-            f"过滤之后一个扫描点都不剩（--only={only}、--rc={rc}）；"
-            f"可用轨道 {sorted(centers)}，可用 rc 值 {available}")
+            f"no scan point left after filtering (--only={only}, --rc={rc}); "
+            f"available orbitals {sorted(centers)}, available rc values {available}")
     return out
 
 
 def energy_centers(cards: Sequence[Any], *,
                    warnings: Optional[List[str]] = None
                    ) -> List[Tuple[str, str, Optional[int], float, int]]:
-    """挑出 ``occ=0`` 的卡片 —— 它们就是 ``energy_scan`` 要扫的对象。
+    """Pick the ``occ=0`` cards -- the targets of ``energy_scan``.
 
-    返回 ``[(卡片键, 标签, l, 现在的 ener, 卡片序号), …]``（保持卡片顺序）。
+    Returns ``[(card key, label, l, current ener, card index), ...]`` (the card
+    order is preserved).
 
-    只认列表式卡片 ``[label, n, l, occ, ener, rcut, rcutus, jj]``：
+    Only list-style cards ``[label, n, l, occ, ener, rcut, rcutus, jj]`` count:
 
-    * ``occ`` 必须是 0（额外投影算子）；占填的卡片是"被描述的那个态"，不扫；
-    * ``ener`` 必须是**非零**数 —— ``ld1.x`` 的文档写得很清楚：``ener=0``
-      表示"用单电子能量"，那是给占据态用的，对 ``occ=0`` 的额外卡片没有意义；
-    * 同一标签出现多次时用 ``标签-序号`` 当键（如 ``5F-2``）。
+    * ``occ`` must be 0 (an extra projection operator); an occupied card
+      describes the state itself and is not scanned;
+    * ``ener`` must be **non-zero**: in ``ld1.x`` the value ``ener=0`` means
+      "use the single-electron energy", which is meant for occupied states and
+      is meaningless on an extra card with ``occ=0``;
+    * when one label appears several times the key is ``label-index`` (``5F-2``).
     """
     if not isinstance(cards, (list, tuple)) or not cards:
-        raise ParameterError("参数里没有 orbitals 卡片，算不出能量扫描中心")
+        raise ParameterError("no orbitals cards in the parameters, cannot derive the energy scan centers")
     totals: Dict[str, int] = {}
     for card in cards:
         if isinstance(card, (list, tuple)) and len(card) > 0:
@@ -287,36 +301,40 @@ def energy_centers(cards: Sequence[Any], *,
 
     seen: Dict[str, int] = {}
     centers: List[Tuple[str, str, Optional[int], float, int]] = []
-    #: ``occ=0`` 但**不能扫**的卡片：(第几张, 标签, 原因) —— 一张都挑不出来时
-    #: 就在报错里逐张列出来，否则用户只看得到"没有可扫的卡片"，不知道为什么
+    #: ``occ=0`` cards that **cannot be scanned**: (card index, label, reason).
+    #: When not a single card qualifies the error lists them one by one;
+    #: otherwise the user only sees "no scannable card" without knowing why.
     refused: List[Tuple[int, str, str]] = []
     for index, card in enumerate(cards, 1):
         if isinstance(card, dict):
             raise ParameterError(
-                f"第 {index} 张卡片是映射写法，``energy_scan`` 改不了它的 ener；"
-                f"请写成列表：['5F', 4, 3, 0.00, -0.60, 1.4, 1.4, 0.0]")
+                f"card {index} is written as a mapping, and ``energy_scan`` "
+                f"cannot change its ener; write it as a list: "
+                f"['5F', 4, 3, 0.00, -0.60, 1.4, 1.4, 0.0]")
         if not isinstance(card, (list, tuple)) or len(card) <= _ENER_COLUMN:
             raise ParameterError(
-                f"第 {index} 张卡片读不出 occ/ener（要 8 列）：{card!r}")
+                f"cannot read occ/ener from card {index} (8 columns needed): {card!r}")
         label = str(card[0]).strip()
         seen[label] = seen.get(label, 0) + 1
         occ = card[_OCC_COLUMN]
         if isinstance(occ, bool) or not isinstance(occ, (int, float)):
-            raise ParameterError(f"第 {index} 张卡片（{label}）的占据数不是数：{occ!r}")
+            raise ParameterError(f"card {index} ({label}) has a non-numeric occupation: {occ!r}")
         if float(occ) != 0.0:
-            continue                                   # 被描述的态：不是扫描对象
+            continue                                   # the described state: not a scan target
         ener = card[_ENER_COLUMN]
         if isinstance(ener, bool) or not isinstance(ener, (int, float)):
-            raise ParameterError(f"第 {index} 张卡片（{label}）的 ener 不是数：{ener!r}")
+            raise ParameterError(f"card {index} ({label}) has a non-numeric ener: {ener!r}")
         if float(ener) == 0.0:
-            reason = ("占据数是 0，但 ener 也写的是 0.0 —— ld1.x 对这种卡片用"
-                      "「单电子能量」，不是这个值（实测直接报 mismatched "
-                      "all-electron/pseudo occupations）")
+            reason = ("the occupation is 0 but ener is also 0.0 -- ld1.x takes "
+                      "the single-electron energy for such a card instead of "
+                      "this value and reports mismatched all-electron/pseudo "
+                      "occupations")
             refused.append((index, label, reason))
             if warnings is not None:
                 warnings.append(
-                    f"第 {index} 张卡片 {label} 的{reason}；它不参与能量扫描 —— "
-                    f"想扫就给它一个非零的 ener（如 -0.05）")
+                    f"card {index} {label}: {reason}; it is left out of the "
+                    f"energy scan -- give it a non-zero ener (e.g. -0.05) to "
+                    f"scan it")
             continue
         raw_l = card[2] if len(card) > 2 else None
         channel = int(raw_l) if isinstance(raw_l, int) and not isinstance(raw_l, bool) \
@@ -324,17 +342,19 @@ def energy_centers(cards: Sequence[Any], *,
         key = label if totals.get(label, 0) <= 1 else f"{label}-{seen[label]}"
         centers.append((key, label, channel, float(ener), index))
     if not centers:
-        detail = "".join(f"\n  · 第 {index} 张 {label}：{reason}"
+        detail = "".join(f"\n  - card {index} {label}: {reason}"
                         for index, label, reason in refused)
         raise ParameterError(
-            "参数里没有可扫的卡片：``energy_scan`` 扫的是**占据数为 0 且 ener 非零**"
-            "的额外投影算子卡片（``[label, n, l, 0.0, <非零 ener>, rcut, rcutus, jj]``）。"
-            + (f"这份参数里有 {len(refused)} 张占据数为 0 的卡片，但它们都不能扫："
+            "no scannable card in the parameters: ``energy_scan`` scans extra "
+            "projection operator cards **with occupation 0 and a non-zero ener** "
+            "(``[label, n, l, 0.0, <non-zero ener>, rcut, rcutus, jj]``). "
+            + (f"this parameter file has {len(refused)} cards with occupation 0, but none of them can be scanned:"
                + detail
-               + "\n  → 给它们一个非零的 ener（如 -0.05 / -0.60）就能扫了"
+               + "\n  -> give them a non-zero ener (e.g. -0.05 / -0.60) to scan them"
                if refused else
-               "这份参数里连一张占据数为 0 的卡片都没有 —— 多投影子要给同一个 l "
-               "再挂一张 occ=0 的卡片"))
+               "this parameter file has no card with occupation 0 at all -- "
+               "multiple projection operators need a second occ=0 card for the "
+               "same l"))
     return centers
 
 
@@ -344,14 +364,15 @@ def energy_points(centers: Sequence[Tuple[str, str, Optional[int], float, int]],
                   only: Optional[Sequence[str]] = None,
                   ener: Optional[Sequence[float]] = None,
                   warnings: Optional[List[str]] = None) -> List[EnergyPoint]:
-    """算出全部能量扫描点（可按卡片键 / 标签 / 具体 ener 值过滤）。
+    """Compute every energy scan point (filterable by card key / label / ener value).
 
-    ``energy_range`` 与 ``rc_range`` 一样是 ``[起点, 终点, 步长]``，而且是
-    **相对每张卡片现在的 ener 的偏移**（中心 = 卡片里那个值）：两张卡片各有各
-    的中心，同一个范围套在它们身上。
+    ``energy_range`` is ``[start, stop, step]`` like ``rc_range``, and again an
+    **offset from the current ener of each card** (the center is the value in
+    the card): every card keeps its own center and the same range is applied to
+    each of them.
     """
     if not centers:
-        raise ParameterError("没有可扫的卡片（见 energy_centers 的报错）")
+        raise ParameterError("no scannable card (see the error from energy_centers)")
     steps = offsets(energy_range)
 
     wanted = [str(item).strip() for item in only] if only else None
@@ -361,7 +382,7 @@ def energy_points(centers: Sequence[Tuple[str, str, Optional[int], float, int]],
                    and item not in {label for _, label, _, _, _ in centers}]
         if unknown:
             raise ParameterError(
-                f"--only 里的 {unknown} 不是可扫的卡片；可选：{sorted(known)}")
+                f"{unknown} from --only are not scannable cards; available: {sorted(known)}")
 
     out: List[EnergyPoint] = []
     for key, label, channel, center, index in centers:
@@ -379,41 +400,45 @@ def energy_points(centers: Sequence[Tuple[str, str, Optional[int], float, int]],
         if (warnings is not None and steps
                 and any(abs(round(center + offset, 10)) < 1e-12
                         for offset in steps)):
-            # ld1.x 对 occ=0 的卡片拒绝 ener=0（那表示"用单电子能量"），
-            # 实测报的是 "mismatched all-electron/pseudo occupations"
+            # ld1.x rejects ener=0 on an occ=0 card (it means "use the
+            # single-electron energy") and reports mismatched
+            # all-electron/pseudo occupations
             warnings.append(
-                f"{key} 的扫描范围里有 ener = 0.0 这个点（中心 {center:g} + "
-                f"偏移）：ld1.x 会拒它（occ=0 的卡片不能用单电子能量），"
-                f"那个点多半白跑 —— 想避开就把范围挪开 0")
+                f"the scan range of {key} contains ener = 0.0 (center "
+                f"{center:g} + offset): ld1.x rejects it (an occ=0 card cannot "
+                f"use the single-electron energy), so that point is likely "
+                f"wasted -- shift the range away from 0 to avoid it")
     if not out:
         available = sorted({round(center + offset, 10)
                             for _, _, _, center, _ in centers
                             for offset in steps})
         raise ParameterError(
-            f"过滤之后一个扫描点都不剩（--only={only}、--ener={ener}）；"
-            f"可用的卡片 {sorted(known)}，可用的 ener 值 {available}")
+            f"no scan point left after filtering (--only={only}, --ener={ener}); "
+            f"available cards {sorted(known)}, available ener values {available}")
     return out
 
 
 def namelist_center(sections: Mapping[str, Any], *, section: str = RCLOC_SECTION,
                     key: str = RCLOC_KEY) -> float:
-    """从参数里读扫描中心（``&inputp`` 的 ``rcloc``）。
+    """Read the scan center from the parameters (``rcloc`` of ``&inputp``).
 
-    写死了要显式给：这个值是扫描的**中心**，缺了就没法算偏移范围 ——
-    与其猜一个（``ld1.x`` 的默认值随版本变），不如当场报错让人写清楚。
+    It must be given explicitly: this value is the **center** of the scan, and
+    without it the offset range cannot be computed -- rather than guessing one
+    (the ``ld1.x`` default changes between versions), fail right away so the
+    value gets written down.
     """
     block = sections.get(section)
     if not isinstance(block, Mapping):
         raise ParameterError(
-            f"参数里没有 &{section} 段，读不出 {key} 的扫描中心")
+            f"the parameters have no &{section} section, cannot read the scan center of {key}")
     raw = block.get(key)
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         raise ParameterError(
-            f"&{section} 里没有可用的 {key}（实际是 {raw!r}）：扫描中心取它，"
-            f"请显式写一个，例如 `{key}: 2.5`")
+            f"&{section} has no usable {key} (got {raw!r}): the scan center comes "
+            f"from it, so write one explicitly, e.g. `{key}: 2.5`")
     value = float(raw)
     if value <= 0:
-        raise ParameterError(f"&{section} 的 {key} 必须是正数，实际是 {value:g}")
+        raise ParameterError(f"{key} in &{section} must be positive, got {value:g}")
     return value
 
 
@@ -422,7 +447,7 @@ def namelist_points(center: float, spec: Any, *,
                     axis: Axis = RCLOC_AXIS, runs_dir: str = RUNS_DIR,
                     values: Optional[Sequence[float]] = None
                     ) -> List[NamelistPoint]:
-    """算出全部扫描点：范围怎么解释见 :func:`read_range`。"""
+    """Compute every scan point; :func:`read_range` explains how the range is read."""
     absolute, by_absolute = read_range(spec, center, key=key)
     out: List[NamelistPoint] = []
     for value in absolute:
@@ -431,7 +456,7 @@ def namelist_points(center: float, spec: Any, *,
             continue
         if value <= 0:
             raise ParameterError(
-                f"{key} 的扫描点 {value:g} 不是正数（中心 {center:g}）")
+                f"scan point {value:g} of {key} is not positive (center {center:g})")
         tag = value_tag(value)
         out.append(NamelistPoint(
             key=key, value=value,
@@ -440,13 +465,13 @@ def namelist_points(center: float, spec: Any, *,
             relative_dir=Path(runs_dir) / key / f"{axis.tag}{tag}"))
     if not out:
         raise ParameterError(
-            f"过滤之后一个扫描点都不剩（--rc={values}）；"
-            f"可用的值 {[round(v, 10) for v in absolute]}")
+            f"no scan point left after filtering (--rc={values}); "
+            f"available values {[round(v, 10) for v in absolute]}")
     return out
 
 
 def config_tag(config: str) -> str:
-    """组态 -> 目录名：``5f3 6s2 6p6 6d1 7s2`` -> ``cfg_5f3_6s2_6p6_6d1_7s2``。"""
+    """Configuration -> directory name: ``5f3 6s2 6p6 6d1 7s2`` -> ``cfg_5f3_6s2_6p6_6d1_7s2``."""
     body = "".join(ch if (ch.isalnum() or ch in "_.") else "_"
                    for ch in config.strip())
     body = "_".join(part for part in body.split("_") if part)
@@ -454,10 +479,11 @@ def config_tag(config: str) -> str:
 
 
 def config_electrons(config: str) -> int:
-    """组态字符串里的价电子数：``5f3 6s2 6p6 6d1 7s2`` -> 14。
+    """Valence electron count of a configuration string: ``5f3 6s2 6p6 6d1 7s2`` -> 14.
 
-    只认 ``<nl><占据数>`` 这种写法（``6d0``、``5f3``、``7s2.5`` 都算），
-    认不出来的片段忽略 —— 它只用来做"是不是同一个价电子数"的提醒。
+    Only ``<nl><occupation>`` items count (``6d0``, ``5f3``, ``7s2.5`` all do);
+    anything else is ignored. The count only feeds the "same number of valence
+    electrons?" reminder.
     """
     total = 0.0
     for part in str(config).replace(",", " ").split():
@@ -471,18 +497,18 @@ def config_points(configs: Sequence[Any], *, runs_dir: str = RUNS_DIR,
                   only: Optional[Sequence[str]] = None,
                   rc: Optional[Sequence[float]] = None,
                   file_pseudo: str = "") -> List[ConfigPoint]:
-    """``configts`` 列表 -> 扫描点（``--only`` 可按序号/标签/组态串过滤）。"""
+    """``configts`` list -> scan points (``--only`` filters by index / tag / configuration string)."""
     if not isinstance(configs, (list, tuple)) or not configs:
         raise ParameterError(
-            f"{CONFIGTS_KEY} 必须是非空列表，形如 "
+            f"{CONFIGTS_KEY} must be a non-empty list such as "
             f"['5f3 6s2 6p6 6d1 7s2', '5f3 6s2 6p6 6d2 7s1']")
     if rc:
         raise ParameterError(
-            f"这个工作流扫的是 {CONFIGTS_KEY}（测试组态），--rc 用不上")
+            f"this workflow scans {CONFIGTS_KEY} (test configurations), so --rc does not apply")
     entries: List[str] = []
     for index, raw in enumerate(configs, 1):
         if not isinstance(raw, str) or not raw.strip():
-            raise ParameterError(f"{CONFIGTS_KEY} 第 {index} 项不是非空字符串：{raw!r}")
+            raise ParameterError(f"item {index} of {CONFIGTS_KEY} is not a non-empty string: {raw!r}")
         entries.append(raw.strip())
 
     wanted = [str(item).strip() for item in only] if only else None
@@ -498,87 +524,88 @@ def config_points(configs: Sequence[Any], *, runs_dir: str = RUNS_DIR,
                                file_pseudo=file_pseudo))
     if not out:
         raise ParameterError(
-            f"--only 过滤之后一个组态都不剩（--only={only}）；可用的有："
-            + "、".join(f"{i}:{config_tag(c)}" for i, c in enumerate(entries, 1)))
+            f"no configuration left after --only filtering (--only={only}); available: "
+            + ", ".join(f"{i}:{config_tag(c)}" for i, c in enumerate(entries, 1)))
     return out
 
 
 def describe(points_list: Sequence[ScanPoint]) -> str:
-    """一句人话：几个轨道、一共多少个点。"""
+    """Plain one-liner: how many orbitals and how many points in total."""
     rows = summary_rows(points_list)
     per = len(points_list) // max(len(rows), 1)
-    return f"{len(rows)} 个轨道 × {per} 个点 = {len(points_list)} 个扫描点"
+    return f"{len(rows)} orbitals × {per} points = {len(points_list)} scan points"
 
 
 def summary_rows(points_list: Sequence[ScanPoint]) -> List[Tuple[str, str, str]]:
-    """``(轨道, rc 值列表, 目录前缀)``，供报告打印。"""
+    """``(orbital, rc value list, directory prefix)`` for the report to print."""
     per: Dict[str, List[ScanPoint]] = {}
     for point in points_list:
         per.setdefault(point.orbital, []).append(point)
     rows = []
     for orbital, items in per.items():
-        values = "、".join(f"{item.rcut:g}" for item in items)
+        values = ", ".join(f"{item.rcut:g}" for item in items)
         rows.append((orbital, values, str(items[0].relative_dir.parent)))
     return rows
 
 
 def describe_energy(points_list: Sequence[EnergyPoint]) -> str:
-    """一句人话：几张卡片、一共多少个点。"""
+    """Plain one-liner: how many cards and how many points in total."""
     rows = energy_summary_rows(points_list)
     per = len(points_list) // max(len(rows), 1)
-    return f"{len(rows)} 张 occ=0 卡片 × {per} 个点 = {len(points_list)} 个扫描点"
+    return f"{len(rows)} occ=0 cards × {per} points = {len(points_list)} scan points"
 
 
 def energy_summary_rows(points_list: Sequence[EnergyPoint]
                         ) -> List[Tuple[str, str, str]]:
-    """``(卡片键, ener 值列表, 目录前缀)``，供报告打印。"""
+    """``(card key, ener value list, directory prefix)`` for the report to print."""
     per: Dict[str, List[EnergyPoint]] = {}
     for point in points_list:
         per.setdefault(point.key, []).append(point)
     rows = []
     for key, items in per.items():
-        values = "、".join(f"{item.ener:g}" for item in items)
+        values = ", ".join(f"{item.ener:g}" for item in items)
         rows.append((key, values, str(items[0].relative_dir.parent)))
     return rows
 
 
 def describe_namelist(points_list: Sequence[NamelistPoint]) -> str:
-    """一句人话：扫哪个 namelist 段的哪个量、一共多少个点。"""
+    """Plain one-liner: which quantity of which namelist section, and how many points."""
     rows = namelist_summary_rows(points_list)
     per = len(points_list) // max(len(rows), 1)
-    keys = "、".join(key for key, _, _ in rows)
+    keys = ", ".join(key for key, _, _ in rows)
     where = points_list[0].section if points_list else ""
-    prefix = f"&{where} 的 " if where else ""
-    return f"{prefix}{keys} × {per} 个点 = {len(points_list)} 个扫描点"
+    prefix = f"&{where} " if where else ""
+    return f"{prefix}{keys} × {per} points = {len(points_list)} scan points"
 
 
 def namelist_summary_rows(points_list: Sequence[NamelistPoint]
                           ) -> List[Tuple[str, str, str]]:
-    """``(键, 值列表, 目录前缀)``，供报告打印。"""
+    """``(key, value list, directory prefix)`` for the report to print."""
     per: Dict[str, List[NamelistPoint]] = {}
     for point in points_list:
         per.setdefault(point.key, []).append(point)
     rows = []
     for key, items in per.items():
-        values = "、".join(f"{item.value:g}" for item in items)
+        values = ", ".join(f"{item.value:g}" for item in items)
         rows.append((key, values, str(items[0].relative_dir.parent)))
     return rows
 
 
 def config_summary_rows(points_list: Sequence[ConfigPoint]
                         ) -> List[Tuple[str, str, str]]:
-    """``(序号, 组态, 目录)``，供报告打印。"""
+    """``(index, configuration, directory)`` for the report to print."""
     return [(str(point.index), point.config, str(point.relative_dir))
             for point in points_list]
 
 
 def check_card_count(sections: Mapping[str, Any],
                      warnings: Optional[List[str]] = None) -> None:
-    """``n_orbitals`` 与卡片张数对不上时提醒一句。
+    """Warn when ``n_orbitals`` disagrees with the number of cards.
 
-    渲染输入时本来就会硬报错（:mod:`pp_gen.ld1_input`），但那条错在**扫描点算完
-    之后**才出；这里先提一句，免得"卡片读不出可扫的"和"张数不对"两处毛病
-    要改两轮才改完。多出来的卡片 ld1.x 会直接丢掉（它只读前 ``n_orbitals`` 张）。
+    Rendering the input fails hard on this mismatch, but only **after the scan
+    points are computed**; warning already here fixes both problems -- an
+    unreadable card set and a wrong count -- in a single pass. ld1.x silently
+    drops the extra cards (it reads only the first ``n_orbitals``).
     """
     if warnings is None:
         return
@@ -588,28 +615,31 @@ def check_card_count(sections: Mapping[str, Any],
             and isinstance(cards, (list, tuple))
             and declared != len(cards)):
         warnings.append(
-            f"n_orbitals 写的是 {declared}，但 orbitals 里列了 {len(cards)} 张卡片"
-            f"—— ld1.x 只读前 {declared} 张（后面的会被丢掉）；"
-            f"生成 U.in 时会报错，把 n_orbitals 改成 {len(cards)}")
+            f"n_orbitals says {declared} but orbitals lists {len(cards)} cards "
+            f"-- ld1.x reads only the first {declared} (the rest are dropped); "
+            f"generating U.in will fail, so change n_orbitals to {len(cards)}")
 
 
 def check_config_setup(sections: Mapping[str, Any], *,
                        multiple: bool) -> List[str]:
-    """逐组态跑之前该提醒的事（只提醒、不改数据）。"""
+    """Reminders to give before running configuration by configuration (warnings only, data untouched)."""
     warnings: List[str] = []
     block = sections.get("input")
     iswitch = block.get("iswitch") if isinstance(block, Mapping) else None
     has_cards = any(key in sections for key in ("orbitals", "cards"))
     if multiple and iswitch == 3:
         warnings.append(
-            "iswitch=3 是「生成 PP + 测试」：它内存里的 PP 按生成组态 "
-            f"（config = {block.get('config') if isinstance(block, Mapping) else '?'}）"
-            "做非屏蔽，测试组态一换 PS 总能就对不上（实测同一个组态：每组态单独跑给 "
-            "-183.196 Ry，同一次 nconf>1 或 iswitch=2 + 固定 file_pseudo 给 "
-            "-181.60 Ry，差 1.6 Ry）—— 这样收上来的 ΔE_PS 与 δ 不可信。"
-            "建议把这个工作流的参数文件改成 iswitch=2（并给出 file_pseudo）")
+            "iswitch=3 means \"generate PP + test\": the PP in memory is "
+            f"unscreened for the generating configuration (config = {block.get('config') if isinstance(block, Mapping) else '?'})"
+            ", so it no longer matches the PS total energy once the test "
+            "configuration changes (for one and the same configuration, "
+            "per-configuration runs give -183.196 Ry while a single nconf>1 run "
+            "or iswitch=2 with a fixed file_pseudo gives -181.60 Ry, 1.6 Ry "
+            "apart) -- the ΔE_PS and δ collected that way are not trustworthy. "
+            "Change the parameter file of this workflow to iswitch=2 (and give "
+            "file_pseudo)")
     if iswitch == 2 and has_cards:
         warnings.append(
-            "iswitch=2（测试已生成的 PP）不需要通道卡片 —— 卡片只在 iswitch=3"
-            "（生成赝势）时才该出现")
+            "iswitch=2 (test an already generated pseudopotential) needs no "
+            "orbital cards -- they belong to iswitch=3 (generate a pseudopotential) only")
     return warnings

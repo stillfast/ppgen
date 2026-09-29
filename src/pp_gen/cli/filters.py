@@ -19,7 +19,7 @@ def _split_floats(text: Optional[str], flag: str) -> Optional[list]:
         try:
             values.append(float(item))
         except ValueError:
-            raise PpGenError(f"{flag} 里的 {item.strip()!r} 不是数") from None
+            raise PpGenError(f"{flag}: {item.strip()!r} is not a number") from None
     return values or None
 
 

@@ -11,13 +11,18 @@ from typing import Dict, List, Sequence, Tuple
 
 def restrict_orbitals(files: Sequence[WfcFile],
                       orbitals: Sequence[str]) -> Tuple[List[WfcFile], List[str]]:
-    """按 ``data.orbitals`` 只留这几个态（匹配按**态名**，忽略后缀与大小写）。
+    """Keep only the states listed in ``data.orbitals`` (matched by **state name**,
+    ignoring the suffix and the case).
 
-    * ``6S`` 同时选中 ``6S``、``6S (PS)``、``6S (AE)``（``ld1ps.wfc`` 那种成对表头）；
-    * 过滤是在"读文件"之后、比态之前做的 —— 所以图、极值 CSV、报告里的
-      "态：" 都只剩下选中的那几个，跨文件的态一致性也不再被没画出来的态干扰；
-    * 某一个名字在所有文件里都找不到只是**提醒**（可能只是某份文件里没有），
-      但全都找不到（筛完没有任何态）就报错。
+    * ``6S`` selects ``6S``, ``6S (PS)`` and ``6S (AE)`` at the same time (the
+      paired headers of ``ld1ps.wfc``);
+    * filtering happens after the file is read but before states are compared,
+      so the figure, the extrema CSV and the "states:" entry of the report list
+      only the selected orbitals, and cross file state consistency is not
+      disturbed by states that are not drawn;
+    * a name found in no file is only a **warning** (that file may simply lack
+      it), but when nothing matches at all (the filter keeps no state) it is an
+      error.
     """
     if not orbitals:
         return list(files), []
@@ -37,26 +42,27 @@ def restrict_orbitals(files: Sequence[WfcFile],
     for name in orbitals:
         key = name.strip().lower()
         if not found.get(key):
-            warnings.append(f"data.orbitals 里的 '{name}' 在 "
-                            + "、".join(item.path.name for item in files)
-                            + " 里都没有，已忽略")
+            warnings.append(f"'{name}' from data.orbitals appears in none of "
+                            + ", ".join(item.path.name for item in files)
+                            + ", ignored")
     total = sum(len(item.labels) for item in kept)
     if not total:
         raise PlotError(
             "data.orbitals "
-            + "、".join(f"'{name}'" for name in orbitals)
-            + " 在这些文件里一个态都没匹配上（文件里有："
-            + "、".join(sorted({label for item in files for label in item.labels}))
-            + "）")
-    warnings.append("按 data.orbitals 只画这些态："
-                    + "、".join(item for item in orbitals)
-                    + f"（筛出 {total} 个态列；实际画多少条曲线见上面"
-                      f"'叠加'那行 —— 被跳过的重复半不算）")
+            + ", ".join(f"'{name}'" for name in orbitals)
+            + " matched no state in these files (the files contain: "
+            + ", ".join(sorted({label for item in files for label in item.labels}))
+            + ")")
+    warnings.append("drawing only these states per data.orbitals: "
+                    + ", ".join(item for item in orbitals)
+                    + f" ({total} state columns selected; the number of curves"
+                      f" actually drawn is reported by the plot summary --"
+                      f" skipped duplicate halves do not count)")
     return kept, warnings
 
 
 def variant_of(label: str) -> Tuple[str, str]:
-    """``"5F (PS)"`` -> ``("5F", "PS")``；没有后缀就是 ``(label, "")``。"""
+    """``"5F (PS)"`` -> ``("5F", "PS")``; without a suffix it is ``(label, "")``."""
     for variant in ("AE", "PS"):
         suffix = f" ({variant})"
         if label.endswith(suffix):
@@ -65,10 +71,12 @@ def variant_of(label: str) -> Tuple[str, str]:
 
 
 def _channel_names_of(files: Sequence[DlogFile]) -> Dict[int, List[str]]:
-    """从 dlog 文件所在目录的 ``U.in`` 读卡片，得到 ``l -> 轨道标签``。
+    """Read the cards from ``U.in`` in the directory holding the dlog files to get
+    ``l -> orbital labels``.
 
-    画图时给通道贴标签用（``l=0 (6S,7S)``）；读不到卡片（例如 iswitch=2 的
-    测试目录、或没留 U.in）就返回空字典，通道名退回 ``l=0``。
+    It labels the channels in the figure (``l=0 (6S,7S)``); when the cards
+    cannot be read (for example an iswitch=2 test directory, or a run that kept
+    no U.in) an empty dict is returned and channel names fall back to ``l=0``.
     """
     from ..inputs import ld1_input_writer as ld1_input
 

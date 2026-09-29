@@ -1,31 +1,32 @@
-"""领域错误：能指望用户看懂并自己修的那一类。
+"""Domain errors: the kind a user can read and fix.
 
-CLI 只捕获 :class:`PpGenError`，把它打到 stderr 并返回退出码 2。任何别
-的异常都会带着 traceback 冒出来 —— 那是 bug，不该被包装成"用户输入有
-问题"。
+The CLI catches only :class:`PpGenError`, prints it to stderr and exits with
+code 2. Every other exception escapes with a traceback -- that is a bug and
+must not be dressed up as bad user input.
 """
 from __future__ import annotations
 
 
 class PpGenError(Exception):
-    """用户可修的输入/配置错误。"""
+    """A bad input or configuration the user can fix."""
 
 
 class InputError(PpGenError):
-    """``input.json`` 有问题。"""
+    """Something is wrong with ``input.json``."""
 
 
 class ParameterError(PpGenError):
-    """参数 YAML（``parameters/**/*.yml``）有问题。"""
+    """Something is wrong with a parameter YAML (``parameters/**/*.yml``)."""
 
 
 class RenderError(PpGenError):
-    """参数翻译不成合法的 ``ld1.x`` 输入。"""
+    """The parameters do not translate into a valid ``ld1.x`` input."""
 
 
 class RunError(PpGenError):
-    """跑不起来（缺少输入文件、``ld1.x`` 不在、超时…）。"""
+    """Nothing runs (missing input file, no ``ld1.x``, timeout...)."""
 
 
 class PlotError(PpGenError):
-    """画不出来（``plot.json`` 有问题、``ld1.wfc`` 读不了、缺 matplotlib…）。"""
+    """Nothing can be drawn (bad ``plot.json``, unreadable ``ld1.wfc``,
+    missing matplotlib...)."""

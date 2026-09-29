@@ -23,7 +23,7 @@ _CARD_LINE = re.compile(r"^(?P<indent>\s*-\s*)\[(?P<body>.*)\](?P<tail>\s*(?:#.*
 
 
 def card_labels(text: str) -> List[str]:
-    """一份 YAML 文本里所有列表式卡片第一列的标签（认不出就空表）。"""
+    """First-column labels of every list-style card in one YAML text (empty list if none)."""
     labels: List[str] = []
     for raw in text.splitlines():
         match = _CARD_LINE.match(raw.rstrip("\n"))

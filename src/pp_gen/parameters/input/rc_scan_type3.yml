@@ -6,8 +6,8 @@ input:
   rel: 1
   iswitch: 3
   nld: 4
-  rlderiv: 4.1      # 对数导数的参考半径（a.u.）：4.1 = 2.17 Å，靠近 UO2 里 U–O 键中点
-                    # 原为 3.0；实测这样四个通道的 |ΔL| 中位都更低、极点差也更小，且无鬼态
+  rlderiv: 4.1      # reference radius for the logarithmic derivative (a.u.): 4.1 = 2.17 Å, near the U–O bond midpoint in UO2
+                    # 4.1 is preferred over 3.0: all four channels then show a lower median |ΔL|, smaller pole shifts and no ghost state
   eminld: -5.0
   emaxld: 5.0
   deld: 0.02
@@ -29,9 +29,9 @@ orbitals:
   - ['6P', 2, 1, 6.00, 0.00, 1.8, 1.8, 0.0]
   - ['6D', 3, 2, 1.00, 0.00, 2.4, 2.4, 0.0]
   - ['5F', 4, 3, 3.00, 0.00, 1.2, 1.2, 0.0]
-  # 多投影子（pseudotype=3 才正确支持）：occupancy=0 + 指定 ener 就能为同一个 l
-  # 再挂一个投影算符 —— 位置/能量依赖都可调，实测把 l=2、l=3 的极点差从
-  # 0.14/0.04 压到 0.00，|ΔL| 中位从 4.0e-3/2.5e-3 降到 3.6e-4/7.0e-4
+  # multiple projectors (only pseudotype=3 supports them correctly): occupancy=0 plus an explicit ener attaches
+  # a second projection operator to the same l -- both its position and its energy dependence are tunable, and it
+  # brings the pole shifts of l=2 and l=3 from 0.14/0.04 down to 0.00 and the median |ΔL| from 4.0e-3/2.5e-3 to 3.6e-4/7.0e-4
   - ['6D', 3, 2, 0.00, -0.05, 2.4, 2.4, 0.0]
   - ['5F', 4, 3, 0.00, -0.30, 1.2, 1.2, 0.0]
 

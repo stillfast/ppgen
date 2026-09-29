@@ -1,31 +1,39 @@
-"""扫完一组就把这一组的扫描值更新成最佳值（``..._range.yml`` 的 ``update``）。
+"""After a group is scanned, its scanned value is updated to the best one (the
+``update`` key of ``..._range.yml``).
 
-``"update": true`` 时，``ppgen run -i input.json`` **逐组串行**：
+With ``"update": true``, ``ppgen run -i input.json`` works **serially, group by
+group**:
 
-1. 按当前参数生成这一组的所有扫描点（``rc_scan`` 是
-   ``runs/<轨道>/rc_<值>/U.in``；``energy_scan`` 是
-   ``runs/<卡片键>/ener_<值>/U.in``）并逐个跑；
-2. 拿跑出来的 ``ld1.dlog`` / ``ld1ps.dlog`` 挑最佳点，判据与 ``ppgen report
-   --pole`` 完全一致：**极点是否重合 → 极点 ΔE 合计 → ``|ΔL|`` 中位数**
-   （只看这一组对应的那个通道，也就是 report 的 ``--scope scanned``）；
-3. 把这个扫描值 **就地写回提供这张卡片的参数**（``rc_scan`` 改 ``rcut``/
-   ``rcutus``，``energy_scan`` 改 ``occ=0`` 卡片的 ``ener``），于是下一组的输入里
-   就带着更新后的值 —— 一次只动一个变量，优化过的那一组从此固定在最佳值上。
+1. Generate all scan points of the group from the current parameters
+   (``runs/<orbital>/rc_<value>/U.in`` for ``rc_scan``;
+   ``runs/<card key>/ener_<value>/U.in`` for ``energy_scan``) and run each of
+   them;
+2. Pick the best point from the ``ld1.dlog`` / ``ld1ps.dlog`` that came out, with
+   exactly the criteria of ``ppgen report --pole``: **do the poles coincide ->
+   total pole ΔE -> median ``|ΔL|``** (looking only at the channel of this group,
+   i.e. ``--scope scanned`` in report);
+3. Write that scanned value **back into the parameter file that provides the
+   card** (``rc_scan`` changes ``rcut``/``rcutus``, ``energy_scan`` changes the
+   ``ener`` of an ``occ=0`` card), so the input of the next group already carries
+   the updated value: one variable is changed at a time and the optimized group
+   stays pinned to its best value from then on.
 
-能量窗口默认取 ``&input`` 里的 ``eminld`` / ``emaxld``（与 ``report`` 用的
-``plot.json`` 的 ``xlim`` 是同一个窗口）；极点容差默认与 ``ppgen report`` 一样是
-``0.15`` Ry。想改就写成映射：
+The energy window defaults to ``eminld`` / ``emaxld`` in ``&input`` (the same
+window as the ``xlim`` of the ``plot.json`` used by ``report``); the pole
+tolerance defaults to ``0.15`` Ry, as in ``ppgen report``. Write a mapping to
+change them:
 
 .. code-block:: yaml
 
-    update: true                                      # 等于 {"criterion": "pole"}
+    update: true                                      # same as {"criterion": "pole"}
     update: {"criterion": "pole", "pole_threshold": 0.02}
-    update: {"criterion": "pole", "window": [-3, 3]}   # 别用 15 Ry 那么宽的窗口
-    update: {"criterion": "median"}                    # 想换判据也行
+    update: {"criterion": "pole", "window": [-3, 3]}   # avoid windows as wide as 15 Ry
+    update: {"criterion": "median"}                    # a different criterion works too
 
-窗口太宽（超过 :data:`WIDE_WINDOW`）而 ``update`` 里又没写 ``window`` 时，
-``run`` 会提醒一句：那种窗口里"极点重合"几乎不成立，排序会掉到 ΔE 合计上，
-挑出来的点可能毫无意义（见 :func:`wide_window_note`）。
+When the window is too wide (beyond :data:`WIDE_WINDOW`) and ``update`` does not
+set ``window``, ``run`` prints a warning: in such a window "the poles coincide"
+almost never holds, the ordering falls back to the total ΔE, and the chosen point
+may be meaningless (see :func:`wide_window_note`).
 """
 from __future__ import annotations
 
@@ -45,20 +53,21 @@ from ..writing.cards import write_card_ener, write_card_rcut
 from ..writing.namelists import write_namelist_value
 from typing import Dict
 
-#: "挑最佳点"能用的判据：``pole``（report --pole 那套三级判据）或某个 ``|ΔL|``
-#: 统计量
+#: criteria available for "picking the best point": ``pole`` (the three-level
+#: criterion of report --pole) or one ``|ΔL|`` statistic
 CRITERIA = METRICS
 
-#: ld1.x 写出来的两个对数导数文件（AE 与 PS）
+#: the two logarithmic derivative files written by ld1.x (AE and PS)
 AE_DLOG = "ld1.dlog"
 PS_DLOG = "ld1ps.dlog"
 
-#: 极点容差默认值：与 ``report`` 读的 ``plot.json`` 里 ``analysis.pole_threshold``
-#: 的默认值一致（``pp_gen.dlog.POLE_TOL``）
+#: default pole tolerance: matches the default of ``analysis.pole_threshold`` in
+#: the ``plot.json`` read by ``report`` (``pp_gen.dlog.POLE_TOL``)
 DEFAULT_POLE_THRESHOLD = 0.15
 
-#: 分析窗口宽到这个程度（Ry）就提醒一句（见 :func:`wide_window_note`）：
-#: ±5 Ry（10 Ry 宽）还挑得出重合的极点，``-5…10``（15 Ry）就明显不行了
+#: a warning is printed once the analysis window (Ry) is this wide (see
+#: :func:`wide_window_note`): ±5 Ry (10 Ry wide) still yields coinciding poles,
+#: ``-5...10`` (15 Ry) clearly does not
 WIDE_WINDOW = 12.0
 
 _SPEC_KEYS = ("criterion", "pole_threshold", "window")
@@ -68,14 +77,14 @@ _INF = float("inf")
 
 @dataclass(frozen=True)
 class UpdateSpec:
-    """``update`` 这一项的解析结果。"""
+    """Parsed form of the ``update`` entry."""
 
     enabled: bool = False
     criterion: str = "pole"
     pole_threshold: float = DEFAULT_POLE_THRESHOLD
-    #: 能量窗口；``None`` 表示取 ``&input`` 的 ``eminld`` / ``emaxld``
+    #: energy window; ``None`` means take ``eminld`` / ``emaxld`` from ``&input``
     window: Optional[Tuple[float, float]] = None
-    #: 开关是从哪儿来的（报告与提醒里说明用）
+    #: where this setting came from (named in reports and warnings)
     source: str = ""
 
     @property
@@ -83,127 +92,133 @@ class UpdateSpec:
         return self.criterion == "pole"
 
     def describe(self) -> str:
-        """一行说明（``run`` 的报告里打印）。"""
-        text = ("极点是否重合 → 极点 ΔE 合计 → |ΔL| 的中位数"
-                if self.by_pole else f"|ΔL| 的{self.criterion}")
+        """One-line description (printed in the ``run`` report)."""
+        text = ("poles coincide -> total pole ΔE -> median |ΔL|"
+                if self.by_pole else f"|ΔL| {self.criterion}")
         if self.by_pole:
-            text += f"（极点容差 {self.pole_threshold:g} Ry）"
-        window = (f"{self.window[0]:g}…{self.window[1]:g} Ry"
-                  if self.window is not None else "&input 的 eminld/emaxld")
-        return f"{text}；能量窗口 {window}"
+            text += f" (pole tolerance {self.pole_threshold:g} Ry)"
+        window = (f"{self.window[0]:g}...{self.window[1]:g} Ry"
+                  if self.window is not None else "eminld/emaxld from &input")
+        return f"{text}; energy window {window}"
 
 
 @dataclass(frozen=True)
 class Target:
-    """``update`` 要写回的那张卡片。"""
+    """The card ``update`` writes back to."""
 
-    #: 报告 / 记录里的分组名：轨道名（rc 扫描）或卡片键（能量扫描，如 ``5F-2``）
+    #: group name in reports and records: the orbital name (rc scan) or the card
+    #: key (energy scan, e.g. ``5F-2``)
     group: str
-    #: 卡片标签（写回时核对"没改错行"）
+    #: card label (checked on write-back so the wrong line is not changed)
     label: str
     axis: Axis = RCUT_AXIS
-    #: 卡片在 ``orbitals`` 列表里的位置（1 开始）—— 能量扫描按它定位
+    #: position of the card in the ``orbitals`` list (1-based): the energy scan
+    #: locates it this way
     card_index: Optional[int] = None
-    #: namelist 扫描（``rcloc``）：改哪个段的哪个键
+    #: namelist scan (``rcloc``): which key of which section is changed
     section: str = ""
 
     def text(self) -> str:
-        """一句人话：改的是哪张卡片/哪个 namelist 键的哪一列。"""
+        """Plain description: which card / which namelist key, and which axis."""
         if self.section:
-            return f"{self.group}（&{self.section} 的 {self.axis.key}）"
-        where = (f"第 {self.card_index} 张卡片" if self.card_index is not None
-                 else "卡片")
-        return f"{self.group}（{where} {self.label} 的 {self.axis.key}）"
+            return f"{self.group} (&{self.section} {self.axis.key})"
+        where = (f"card {self.card_index}" if self.card_index is not None
+                 else "card")
+        return f"{self.group} ({where} {self.label}, {self.axis.key})"
 
 
 @dataclass(frozen=True)
 class Candidate:
-    """一个扫描点的"能不能当最佳"的度量。"""
+    """How well one scan point could serve as the best one."""
 
     orbital: str
-    #: 扫描值（rc 扫描是 rcut，能量扫描是 ener）
+    #: scanned value (rcut for an rc scan, ener for an energy scan)
     value: float
     directory: Path
     channel: Optional[int]
-    #: 极点是否重合（只看这个扫描点对应的通道）
+    #: whether the poles coincide (only the channel of this scan point)
     coincide: Optional[bool] = None
-    #: 极点 ΔE 合计（``inf`` = 配不上）
+    #: total pole ΔE (``inf`` = nothing matched)
     delta: Optional[float] = None
-    #: ``|ΔL|`` 的那个统计量（``pole`` 判据下它是第三级：中位数）
+    #: the ``|ΔL|`` statistic (the third level under the ``pole`` criterion: the median)
     stat: Optional[float] = None
-    #: 扫的是哪一列（报告与写回都看它）
+    #: which axis is scanned (used by reports and write-back)
     axis: Axis = RCUT_AXIS
 
 
 @dataclass(frozen=True)
 class ScanUpdate:
-    """一组扫完之后的更新结果（报告与 ``output.json`` 都用它）。"""
+    """Update result after one group has been scanned (used by reports and ``output.json``)."""
 
-    #: 分组名：轨道名（rc 扫描）或卡片键（能量扫描）
+    #: group name: the orbital name (rc scan) or the card key (energy scan)
     orbital: str
-    #: 挑出来的最佳扫描值
+    #: the best scanned value that was picked
     value: float
-    #: 更新前的值（卡片里那个中心）
+    #: the value before the update (the centre in the card)
     previous: Optional[float]
-    #: 写回的那份参数文件（挑不出最佳点时也可能为 None）
+    #: the parameter file written back to (may be None when no best point was found)
     file: Optional[Path]
-    #: 真的写回文件了吗（值没变 / 干跑 / 挑不出来都是 False）
+    #: whether the file was really written (False when the value is unchanged, on
+    #: a dry run, or when nothing was picked)
     written: bool
-    #: 最佳点的目录
+    #: directory of the best point
     directory: Optional[Path] = None
     criterion: str = "pole"
     coincide: Optional[bool] = None
     delta: Optional[float] = None
     stat: Optional[float] = None
-    #: 扫的是哪一列
+    #: which axis is scanned
     axis: Axis = RCUT_AXIS
-    #: 一句话说明（"已经是这个值"、"缺 ld1.dlog" …）
+    #: one-line explanation ("already this value", "ld1.dlog missing", ...)
     note: str = ""
 
     @property
     def changed(self) -> bool:
-        """新值跟卡片里原来的值不一样。"""
+        """The new value differs from the original one in the card."""
         return self.previous is None or abs(self.previous - self.value) > 1e-9
 
 
 # --------------------------------------------------------------------------
-# 读开关
+# Reading the setting
 # --------------------------------------------------------------------------
 def read_spec(scan_sections: Mapping[str, Any], *, source: str = "") -> UpdateSpec:
-    """从扫描参数组里读 ``update``。
+    """Read ``update`` from the scan parameter group.
 
-    不写 / 写 ``false`` 就是关；写 ``true`` 用默认判据；写映射可以细调。
-    其它写法直接报错 —— 配置写错要当场说，别悄悄按默认跑。
+    Absent or ``false`` means off; ``true`` uses the default criterion; a mapping
+    fine-tunes it. Anything else is an error: a wrong configuration must be
+    reported right away instead of silently falling back to the defaults.
     """
     if UPDATE_KEY not in scan_sections:
         return UpdateSpec(source=source)
     raw = scan_sections[UPDATE_KEY]
-    where = f"{source} 的 {UPDATE_KEY}" if source else UPDATE_KEY
+    where = f"{source}: {UPDATE_KEY}" if source else UPDATE_KEY
     if raw is None or raw is False:
         return UpdateSpec(enabled=False, source=source)
     if raw is True:
         return UpdateSpec(enabled=True, source=source)
     if not isinstance(raw, Mapping):
         raise ParameterError(
-            f"{where} 只能是 true/false，或者一个映射"
-            f"（如 {{'criterion': 'pole', 'pole_threshold': 0.02}}），"
-            f"实际是 {raw!r}")
+            f"{where} must be true/false or a mapping (e.g. "
+            f"{{'criterion': 'pole', 'pole_threshold': 0.02}}), got {raw!r}")
 
     unknown = sorted(set(raw) - set(_SPEC_KEYS))
     if unknown:
         raise ParameterError(
-            f"{where} 里有不认识的键 {unknown}；可用的只有 {list(_SPEC_KEYS)}")
+            f"{where} has unknown keys {unknown}; only "
+            f"{list(_SPEC_KEYS)} are available")
 
     criterion = raw.get("criterion", "pole")
     if criterion not in CRITERIA:
         raise ParameterError(
-            f"{where} 的 criterion 只能是 {list(CRITERIA)}，实际是 {criterion!r}")
+            f"{where}: criterion must be one of {list(CRITERIA)}, "
+            f"got {criterion!r}")
 
     threshold = raw.get("pole_threshold", DEFAULT_POLE_THRESHOLD)
     if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) \
             or threshold <= 0:
         raise ParameterError(
-            f"{where} 的 pole_threshold 必须是正数，实际是 {threshold!r}")
+            f"{where}: pole_threshold must be a positive number, "
+            f"got {threshold!r}")
 
     window = raw.get("window")
     if window is not None:
@@ -213,8 +228,8 @@ def read_spec(scan_sections: Mapping[str, Any], *, source: str = "") -> UpdateSp
                        for value in window)
                 or float(window[0]) >= float(window[1])):
             raise ParameterError(
-                f"{where} 的 window 要写成 [起点, 终点] 且起点小于终点，"
-                f"实际是 {window!r}")
+                f"{where}: window must be written as [start, end] with start "
+                f"smaller than end, got {window!r}")
         window = (float(window[0]), float(window[1]))
     return UpdateSpec(enabled=True, criterion=str(criterion),
                       pole_threshold=float(threshold), window=window,
@@ -222,13 +237,13 @@ def read_spec(scan_sections: Mapping[str, Any], *, source: str = "") -> UpdateSp
 
 
 # --------------------------------------------------------------------------
-# 挑最佳
+# Picking the best point
 # --------------------------------------------------------------------------
 def orbital_order(scan_points: Sequence[Any]) -> List[str]:
-    """扫描点的分组顺序（卡片顺序，去重）。
+    """Grouping order of the scan points (card order, de-duplicated).
 
-    ``rc_scan`` 一组是一个轨道；``energy_scan`` 一组是一张 ``occ=0`` 的卡片
-    （键是 ``5F-2`` 这种，见 :class:`pp_gen.scan.EnergyPoint`）。
+    One group is one orbital for ``rc_scan``, and one ``occ=0`` card for
+    ``energy_scan`` (keys such as ``5F-2``, see :class:`pp_gen.scan.EnergyPoint`).
     """
     order: List[str] = []
     for point in scan_points:
@@ -239,7 +254,8 @@ def orbital_order(scan_points: Sequence[Any]) -> List[str]:
 
 
 def target_of(point: Any) -> Target:
-    """扫描点 -> 要写回的那张卡片（能量扫描要卡片序号，rc 扫描只要轨道名）。"""
+    """Scan point -> the card to write back to (the energy scan needs the card
+    index, the rc scan only the orbital name)."""
     axis = getattr(point, "axis", RCUT_AXIS)
     group = getattr(point, "group", None) or getattr(point, "orbital", "")
     label = getattr(point, "orbital", group)
@@ -250,11 +266,11 @@ def target_of(point: Any) -> Target:
 
 
 def input_window(sections: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
-    """``&input`` 的 ``eminld``/``emaxld``（``None`` = 参数里没写全）。
+    """``eminld``/``emaxld`` from ``&input`` (``None`` when they are not both set).
 
-    ``sections`` 是渲染用的那层结构：每个 namelist 一个键（``input`` / ``inputp``
-    / ``test``），所以要先钻进 ``sections["input"]`` 里找 —— 卡片是顶层的
-    （``orbitals``）。
+    ``sections`` is the structure used for rendering: one key per namelist
+    (``input`` / ``inputp`` / ``test``), so ``sections["input"]`` has to be
+    entered first; the cards sit at the top level (``orbitals``).
     """
     block: Mapping[str, Any] = sections
     nested = sections.get("input")
@@ -268,8 +284,8 @@ def input_window(sections: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
 
 def window_of(spec: UpdateSpec, sections: Mapping[str, Any],
               files: Sequence[DlogFile]) -> Tuple[float, float]:
-    """分析用的能量窗口：``update.window`` → ``&input`` 的 ``eminld``/``emaxld``
-    → 数据本身的范围。"""
+    """Energy window used for the analysis: ``update.window``, else
+    ``eminld``/``emaxld`` from ``&input``, else the range of the data itself."""
     if spec.window is not None:
         return spec.window
     window = input_window(sections)
@@ -280,12 +296,15 @@ def window_of(spec: UpdateSpec, sections: Mapping[str, Any],
 
 
 def wide_window_note(spec: UpdateSpec, sections: Mapping[str, Any]) -> str:
-    """窗口太宽时的提醒（没问题就返回空串）。
+    """Warning for a window that is too wide (empty string when it is fine).
 
-    15 Ry 那么宽的窗口（``eminld=-5`` / ``emaxld=10``）里"极点重合"几乎不可能
-    成立（高能端一堆跟赝势转移性无关的极点把判据顶掉），排序会掉到第二级 ΔE
-    合计上 —— 实测 6P 曾被挑到 ΔE 3.88 Ry / ``|ΔL|`` 1.42 的点上。所以窗口比
-    :data:`WIDE_WINDOW` 还宽、而 ``update`` 里又没写 ``window`` 时，这里出一句提醒。
+    In a window as wide as 15 Ry (``eminld=-5`` / ``emaxld=10``) "the poles
+    coincide" can hardly hold (a crowd of poles at the high-energy end, unrelated
+    to pseudopotential transferability, dominates the criterion) and the ordering
+    falls back to the second level, the total ΔE, which can pick a point with
+    ΔE 3.88 Ry and ``|ΔL|`` 1.42. So when the window is wider than
+    :data:`WIDE_WINDOW` and ``update`` does not set ``window``, a warning is
+    emitted here.
     """
     if spec.window is not None:
         return ""
@@ -295,10 +314,10 @@ def wide_window_note(spec: UpdateSpec, sections: Mapping[str, Any]) -> str:
     span = window[1] - window[0]
     if span <= WIDE_WINDOW:
         return ""
-    return (f"分析窗口 {window[0]:g}…{window[1]:g} Ry 有 {span:g} Ry 宽"
-            f"（来自 &input 的 eminld/emaxld）：极点判据容易被 5 Ry 以上的"
-            f"高能极点主导，挑出来的点可能不是好点；建议在 {UPDATE_KEY} 里写 "
-            f"window: [-3, 3]")
+    return (f"analysis window {window[0]:g}...{window[1]:g} Ry is {span:g} Ry "
+            f"wide (from eminld/emaxld in &input): the pole criterion is easily "
+            f"dominated by high-energy poles above 5 Ry and the point picked may "
+            f"be a poor one; consider writing window: [-3, 3] in {UPDATE_KEY}")
 
 
 def measure(directory: Path, orbital: str, value: float, *, spec: UpdateSpec,
@@ -306,15 +325,20 @@ def measure(directory: Path, orbital: str, value: float, *, spec: UpdateSpec,
             channel: Optional[int] = None,
             channels: Optional[Sequence[int]] = None,
             axis: Axis = RCUT_AXIS) -> Optional[Candidate]:
-    """量一个扫描点：极点合不合、``|ΔL|`` 是多少。
+    """Measure one scan point: whether the poles coincide and what ``|ΔL|`` is.
 
-    ``value`` 是这个点的扫描值（rc 扫描是 rcut，能量扫描是 ener），只用于记录。
-    ``channel`` 不写就按标签认（``5F`` -> l=3，见 :func:`pp_gen.report.channel_of`）；
-    能量扫描直接给卡片里写的 ``l``，更可靠。``channels`` 给**一串**通道（``rcloc``
-    这种"影响整份赝势"的量没有单一通道），**空元组 = 所有两边都有的通道**。
+    ``value`` is the scanned value of this point (rcut for an rc scan, ener for an
+    energy scan) and is only used for recording. Without ``channel`` the channel
+    is derived from the label (``5F`` -> l=3, see
+    :func:`pp_gen.report.channel_of`); an energy scan passes the ``l`` written in
+    the card, which is more reliable. ``channels`` gives **a sequence** of
+    channels (a quantity such as ``rcloc`` that affects the whole pseudopotential
+    has no single channel); **an empty tuple means all channels present in both
+    files**.
 
-    缺 ``ld1.dlog`` / ``ld1ps.dlog``（那个点跑失败，或者没算对数导数）、或者
-    认不出通道，就返回 ``None`` —— 它不参与比较。
+    A missing ``ld1.dlog`` / ``ld1ps.dlog`` (that point failed, or the
+    logarithmic derivatives were not computed) or an unrecognizable channel
+    returns ``None``, taking it out of the comparison.
     """
     directory = Path(directory)
     ae_path, ps_path = directory / AE_DLOG, directory / PS_DLOG
@@ -339,7 +363,8 @@ def measure(directory: Path, orbital: str, value: float, *, spec: UpdateSpec,
     features: Dict[int, Mapping[str, object]] = {}
     for l in wanted:
         diag = compare(ae, ps, l, window, threshold=spec.pole_threshold)
-        # 极点那两级用的就是 report --pole 的那套（同一个 feature_block / pole_stats）
+        # the two pole levels use exactly the report --pole pair (the same
+        # feature_block / pole_stats)
         features[l] = {"poles": feature_block(
             diag.ae_poles, diag.ps_poles, threshold=spec.pole_threshold,
             grid=diag.grid_step)}
@@ -350,7 +375,8 @@ def measure(directory: Path, orbital: str, value: float, *, spec: UpdateSpec,
             chosen = stats[POLE_FALLBACK] if spec.by_pole else stats[spec.criterion]
     pools = pole_stats(features, wanted)
     if len(wanted) > 1:
-        # 多通道：`|ΔL|` 按 report 的"池化"算法（所有通道、所有能量点一起）
+        # several channels: |ΔL| uses the pooled algorithm of report (all channels
+        # and energy points together)
         chosen = pooled_abs_delta(ae, ps, wanted, window,
                                   POLE_FALLBACK if spec.by_pole else spec.criterion)
     return Candidate(
@@ -362,7 +388,8 @@ def measure(directory: Path, orbital: str, value: float, *, spec: UpdateSpec,
 
 def pooled_abs_delta(ae: DlogFile, ps: DlogFile, channels: Sequence[int],
                      window: Tuple[float, float], metric: str) -> Optional[float]:
-    """多通道池化的 ``|ΔL|`` 统计量（与 ``report`` 的池化列同一个算法）。"""
+    """Multi-channel pooled ``|ΔL|`` statistic (the same algorithm as the pooled
+    column of ``report``)."""
     from ..ld1.log_derivatives import window_mask
 
     mask_ae, mask_ps = window_mask(ae, window), window_mask(ps, window)
@@ -383,10 +410,11 @@ def pooled_abs_delta(ae: DlogFile, ps: DlogFile, channels: Sequence[int],
 
 
 def sort_key(item: Candidate, spec: UpdateSpec) -> Tuple[float, ...]:
-    """排序键（小的好）。
+    """Sort key (smaller is better).
 
-    ``pole``：**极点重合的排前面** → 比**极点 ΔE 合计** → 一样才比
-    ``|ΔL|`` 的中位数；其它判据就只看那一个 ``|ΔL|`` 统计量。
+    ``pole``: **points whose poles coincide come first**, then the **total pole
+    ΔE**, and only then the median ``|ΔL|``; any other criterion looks at that one
+    ``|ΔL|`` statistic alone.
     """
     if spec.by_pole:
         return (0.0 if item.coincide else 1.0,
@@ -397,7 +425,8 @@ def sort_key(item: Candidate, spec: UpdateSpec) -> Tuple[float, ...]:
 
 def choose(candidates: Sequence[Candidate],
            spec: UpdateSpec) -> Optional[Candidate]:
-    """挑最佳点；完全并列时取扫描值小的那个，结果可复现。"""
+    """Pick the best point; an exact tie takes the smaller scanned value, so the
+    result is reproducible."""
     usable = [item for item in candidates if item.stat is not None]
     if not usable:
         return None
@@ -405,15 +434,17 @@ def choose(candidates: Sequence[Candidate],
 
 
 # --------------------------------------------------------------------------
-# 写回
+# Writing back
 # --------------------------------------------------------------------------
 def apply_update(candidates: Sequence[Candidate], *, target: Target,
                  previous: Optional[float], cards_file: Optional[Path],
                  spec: UpdateSpec, write: bool) -> ScanUpdate:
-    """挑最佳点，并把它的扫描值写回参数文件里那张卡片。
+    """Pick the best point and write its scanned value back into the card in the
+    parameter file.
 
-    挑不出最佳点（点都失败 / 没有 dlog）时返回一条只有 ``note`` 的更新记录，
-    让上层出一条提醒 —— 不更新，也不假装更新过。
+    When nothing can be picked (all points failed / no dlog) it returns an update
+    record carrying only a ``note`` so the caller can warn: nothing is updated,
+    and no update is pretended.
     """
     best = choose(candidates, spec)
     if best is None:
@@ -421,20 +452,21 @@ def apply_update(candidates: Sequence[Candidate], *, target: Target,
             orbital=target.group, value=float("nan"), previous=previous,
             file=cards_file, written=False, criterion=spec.criterion,
             axis=target.axis,
-            note=("这一组的扫描点都没有 ld1.dlog/ld1ps.dlog（跑失败？），"
-                  f"没更新 {target.axis.key}"))
+            note=("no scan point in this group has ld1.dlog/ld1ps.dlog "
+                  f"(did they fail?), {target.axis.key} not updated"))
     common = dict(orbital=target.group, value=best.value, previous=previous,
                   file=cards_file, directory=best.directory,
                   criterion=spec.criterion, coincide=best.coincide,
                   delta=best.delta, stat=best.stat, axis=target.axis)
     if cards_file is None:
         return ScanUpdate(written=False, **common,
-                          note="找不到提供 orbitals 卡片的那份参数，没写回")
+                          note="the parameter file providing the orbitals cards "
+                               "was not found, nothing written back")
     if previous is not None and abs(float(previous) - best.value) <= 1e-9:
-        return ScanUpdate(written=False, **common, note="卡片里已经是这个值")
+        return ScanUpdate(written=False, **common, note="the card already holds this value")
     if not write:
         return ScanUpdate(written=False, **common,
-                          note="干跑：没有写回参数文件")
+                          note="dry run: no parameter file written back")
     if target.section:
         written = write_namelist_value(cards_file, target.section,
                                        target.axis.key, best.value)
@@ -444,11 +476,11 @@ def apply_update(candidates: Sequence[Candidate], *, target: Target,
     else:
         written = write_card_rcut(cards_file, target.label, best.value)
     return ScanUpdate(written=written, **common,
-                      note="" if written else "卡片里已经是这个值")
+                      note="" if written else "the card already holds this value")
 
 
 def describe_value(axis: Axis, value: float) -> str:
-    """数值写成一行里的样子：``1.2 bohr`` / ``-0.60 Ry``。"""
+    """How a value looks in one line: ``1.2 bohr`` / ``-0.60 Ry``."""
     return f"{format_value(axis, value)} {axis.unit}"
 
 

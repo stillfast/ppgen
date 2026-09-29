@@ -10,31 +10,31 @@ from ..ld1.log_derivatives import ChannelDiag
 
 @dataclass(frozen=True)
 class SeriesInfo:
-    """一个 wfc 文件的概况（供报告）。"""
+    """Summary of one wfc file (for the report)."""
 
     path: Path
     label: str
     n_points: int
-    states: Tuple[str, ...]              # 已按 n/l 排序
+    states: Tuple[str, ...]              # already sorted by n/l
     r_min_angstrom: float
     r_max_angstrom: float
 
 
 @dataclass(frozen=True)
 class DlogSeries:
-    """一个对数导数文件的概况（供报告）。"""
+    """Summary of one logarithmic derivative file (for the report)."""
 
     path: Path
     label: str
     n_points: int
-    channels: Tuple[int, ...]            # l 值
+    channels: Tuple[int, ...]            # l values
     e_min: float
     e_max: float
 
 
 @dataclass(frozen=True)
 class PlotResult:
-    """``plot`` 干了什么。"""
+    """What ``plot`` did."""
 
     spec_path: Path
     mode: str
@@ -48,35 +48,39 @@ class PlotResult:
     xscale: str
     yscale: str
     n_curves: int
-    #: 通道显示名（``(l, 名字)``）：名字来自 U.in 的卡片，例如 ``l=0 (6S,7S)``
+    #: channel display names (``(l, name)``): the name comes from the U.in card,
+    #: for example ``l=0 (6S,7S)``
     channel_labels: Tuple[Tuple[int, str], ...] = field(default=())
-    #: 画出来实际用的范围（``ylim`` 没写或被丢掉时就是 matplotlib 按数据自动定的）
+    #: the range actually drawn (when ``ylim`` is absent or dropped, matplotlib
+    #: derives it from the data)
     actual_xlim: Optional[Tuple[float, float]] = None
     actual_ylim: Optional[Tuple[float, float]] = None
     png_bytes: int = 0
     warnings: Tuple[str, ...] = field(default=())
-    # ---- 波函数模式（mode='wavefunction'） ----
+    # ---- wavefunction mode (mode='wavefunction') ----
     series: Tuple[SeriesInfo, ...] = field(default=())
     quantity: str = ""
     quantity_source: str = ""
     x_unit: str = ""
     x_unit_source: str = ""
     core: Tuple[str, ...] = field(default=())
-    #: 写出来的极值 CSV（多个 wfc 时每个文件一份；没开 CSV 时为空）
+    #: extrema CSV files written (one per wfc file when there are several; empty
+    #: when CSV output is off)
     csv_files: Tuple[Path, ...] = field(default=())
     csv_rows: int = 0
-    # ---- 对数导数模式（mode='logfunction'） ----
+    # ---- logfunction mode (mode='logfunction') ----
     dlog_series: Tuple[DlogSeries, ...] = field(default=())
-    #: 逐通道的 AE/PS 极点对比（只有两个文件时才有）
+    #: per channel AE/PS pole comparison (only produced with exactly two files)
     diagnostics: Tuple[ChannelDiag, ...] = field(default=())
-    #: 被判成"疑似鬼态"的通道
+    #: channels judged to be "ghost state suspects"
     ghost_suspects: Tuple[int, ...] = field(default=())
-    #: 本次用的 analysis 设置（一句话描述）
+    #: the analysis settings used for this run (one line description)
     analysis_note: str = ""
-    #: 机器可读的分析结果 ``parser.json``（没写时为 None）与其内容
+    #: machine readable analysis result ``parser.json`` (None when not written)
+    #: together with its content
     parser_file: Optional[Path] = None
     parser_payload: Mapping[str, object] = field(default_factory=dict)
-    #: ``analysis.error`` 里打开的开关（minimum, median, average, maximum）
+    #: the switches turned on in ``analysis.error`` (minimum, median, average, maximum)
     error_flags: Tuple[bool, bool, bool, bool] = (True, True, True, True)
 
     @property

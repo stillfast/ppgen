@@ -26,15 +26,18 @@ from .checks import _clipped_fraction_warnings, _clipping_warnings, _fix_log_yli
 
 def _plot_logfunction(spec: PlotSpec, *, outdir: Optional[Path],
                       write: bool) -> PlotResult:
-    """由 ``ld1.dlog`` / ``ld1ps.dlog`` 画 AE 与 PS 的对数导数曲线。
+    """Draw the AE and PS logarithmic derivative curves from ``ld1.dlog`` / ``ld1ps.dlog``.
 
-    约定（与 ``ppgen/script/rc_scan_logderiv.py`` 一致）：
+    Conventions (matching ``ppgen/script/rc_scan_logderiv.py``):
 
-    * 颜色按通道 ``l``、线型按文件（第 1 个实线、第 2 个虚线）；
-    * 对数纵轴画 ``|L|`` —— ``L`` 在极点是发散的（正负都到几千），线性纵轴
-      必然要截断，对数轴反而能把 5 个量级都看进去；
-    * 给了两个文件时，按 ``[AE, PS]`` 的顺序做极点对比：``extra``（1 Ry 内
-      配不上 AE 极点）就是**疑似鬼态**，结果既进报告也进图例。
+    * color by channel ``l``, line style by file (the first solid, the second
+      dashed);
+    * a logarithmic y axis plots ``|L|`` -- ``L`` diverges at a pole (to several
+      thousand in either direction), so a linear y axis would have to truncate,
+      while a log axis keeps 5 orders of magnitude visible;
+    * with two files the poles are compared in ``[AE, PS]`` order: an ``extra``
+      pole (no AE pole within 1 Ry) is a **ghost state suspect**, and the result
+      goes both into the report and into the legend.
     """
     warnings: List[str] = list(spec.warnings)
     warnings += check_text_renders(spec.figure)
@@ -44,10 +47,11 @@ def _plot_logfunction(spec: PlotSpec, *, outdir: Optional[Path],
         warnings += check_pair(files[0], files[1])
     elif len(files) > 2:
         warnings.append(
-            f"给了 {len(files)} 个对数导数文件：全部画出来，但极点对比只在"
-            f"恰好两个文件（AE, PS）时做")
+            f"{len(files)} logarithmic derivative files were given: all of them "
+            f"are drawn, but poles are only compared with exactly two files "
+            f"(AE, PS)")
 
-    # 能量窗口：plot.json 的 xlim 优先，没写就用数据的范围
+    # energy window: plot.json's xlim wins, otherwise the data range is used
     if spec.figure.xlim is not None:
         window = spec.figure.xlim
     else:
@@ -56,16 +60,17 @@ def _plot_logfunction(spec: PlotSpec, *, outdir: Optional[Path],
     for item in files:
         if not window_mask(item, window).any():
             raise PlotError(
-                f"{item.path.name} 在能量窗口 {window[0]:g}…{window[1]:g} Ry 里"
-                f"没有数据点（它是 {item.energy_min:g}…{item.energy_max:g} Ry）")
+                f"{item.path.name} has no data point inside the energy window "
+                f"{window[0]:g}…{window[1]:g} Ry (it covers "
+                f"{item.energy_min:g}…{item.energy_max:g} Ry)")
 
     shared = sorted(set.intersection(*[set(item.ls) for item in files]))
     if not shared:
-        raise PlotError("这些文件没有一个共同的 l 通道，画不了")
+        raise PlotError("these files share no common l channel, cannot draw")
     if len(shared) < files[0].n_channels:
         warnings.append(
-            f"只画各文件都有的通道 l={shared}"
-            f"（{files[0].path.name} 有 {list(files[0].ls)}）")
+            f"drawing only the channels present in every file, l={shared} "
+            f"({files[0].path.name} has {list(files[0].ls)})")
 
     names = _channel_names_of(files)
     curves: List[Curve] = []
@@ -85,7 +90,8 @@ def _plot_logfunction(spec: PlotSpec, *, outdir: Optional[Path],
             diag = compare(files[0], files[1], l, window,
                            threshold=analysis.pole_threshold)
             diagnostics.append(diag)
-            # 图例里只能放英文（matplotlib 默认字体没有中文字形）
+            # only English fits into the legend (the default matplotlib font has
+            # no CJK glyphs)
             stats = diag.legend_stats(minimum=analysis.error_minimum,
                                       median=analysis.error_median,
                                       average=analysis.error_average,
@@ -107,21 +113,21 @@ def _plot_logfunction(spec: PlotSpec, *, outdir: Optional[Path],
                  if item.ghost_suspect]
         if extra:
             warnings.append(
-                f"{'、'.join(extra)} 出现了 AE 没有的极点（疑似鬼态）"
-                f"——见图例与诊断表")
+                f"{', '.join(extra)} show poles that AE does not have (ghost "
+                f"state suspects) -- see the legend and the diagnostic table")
         for item in diagnostics:
             for warning in item.ghost_suspects_text():
                 warnings.append(warning)
 
     for mark in poles:
         if has_cjk(mark.label):
-            warnings.append(f"极点标注含中日韩字符（{mark.label!r}），"
-                            f"matplotlib 默认字体会画成方框")
+            warnings.append(f"a pole label holds CJK characters ({mark.label!r}), "
+                            f"which the default matplotlib font renders as empty boxes")
     for state, suffix in legend_suffix.items():
-        if has_cjk(suffix):                       # 别再画成方框了
+        if has_cjk(suffix):                       # avoid rendering empty boxes
             warnings.append(
-                f"图例里 {state} 的说明含中日韩字符（{suffix!r}），"
-                f"matplotlib 默认字体会画成方框")
+                f"the legend note of {state} holds CJK characters ({suffix!r}), "
+                f"which the default matplotlib font renders as empty boxes")
     fig, ax = build_figure(curves, spec.figure, legend_suffix=legend_suffix,
                            poles=poles)
     actual_xlim = tuple(float(v) for v in ax.get_xlim())
@@ -184,17 +190,18 @@ def _pole_marks(diagnostics: Sequence[ChannelDiag],
                 spec: PlotSpec,
                 names: Optional[Mapping[int, Sequence[str]]] = None
                 ) -> Tuple[EnergyMark, ...]:
-    """把诊断里的极点/零点变成图上的标记（``analysis.mark_poles`` /
-    ``mark_zeros`` 关掉就不画那一种）。"""
+    """Turn the poles and zeros of the diagnostics into figure marks (when
+    ``analysis.mark_poles`` / ``mark_zeros`` is off, that kind is not drawn)."""
     marks: List[EnergyMark] = []
     for diag in diagnostics:
         state = channel_label(diag.l, names)
-        if spec.analysis.mark_zeros:          # L(E) 的零点：贴底短刻度
+        if spec.analysis.mark_zeros:          # zeros of L(E): short tick at the bottom
             marks += [EnergyMark(energy=v, state=state, source="ae", kind="zero")
                       for v in diag.ae_zeros]
             marks += [EnergyMark(energy=v, state=state, source="ps", kind="zero")
                       for v in diag.ps_zeros]
-        # 未配上的那一对（PS 极点 + 它的 AE 伙伴）都画粗，一眼看出"这一对没对齐"
+        # an unmatched pair (a PS pole plus its AE partner) is drawn thick, so
+        # "this pair does not line up" is visible at a glance
         partners = {round(item[0], 10) for item in diag.unmatched_ps
                     if item[0] is not None}
         if not spec.analysis.mark_poles:
@@ -223,18 +230,20 @@ def parser_json(spec: PlotSpec, files: Sequence[DlogFile],
                 when: Optional[str] = None,
                 names: Optional[Mapping[int, Sequence[str]]] = None
                 ) -> Dict[str, object]:
-    """把这次分析整理成机器可读的 ``parser.json``。
+    """Package this analysis as the machine readable ``parser.json``.
 
-    ``names`` 是 ``l -> 轨道标签``（来自 ``U.in``）：每个通道除了 ``l`` 再写一个
-    人类可读的 ``label``，例如 ``l=0 (6S,7S)``。
+    ``names`` is ``l -> orbital labels`` (from ``U.in``): besides ``l`` every
+    channel gets a human readable ``label``, for example ``l=0 (6S,7S)``.
 
-    含 plot.json 里那些决定结果的设置（窗口、阈值、要哪些统计、比了哪些文件），
-    加上逐通道的：
+    The payload records the plot.json settings that determine the result
+    (window, threshold, which statistics are wanted, which files were compared)
+    plus, per channel:
 
-    * **极点**与**零点**（``L(E)=0``）两组 —— 各自 AE/PS 的极值位置
-      （``min``/``max``）、是否重合（``coincide``）、逐对差（``pairs`` 里每对的
-      ``delta``；不再另给平均/中位之类的统计）；
-    * **误差** ``|L_PS − L_AE|`` 的最小 / 中位 / 平均 / 最大。
+    * two groups, **poles** and **zeros** (``L(E)=0``) -- for each of them the
+      AE/PS extreme positions (``min``/``max``), whether they coincide
+      (``coincide``) and the difference of every pair (the ``delta`` of each
+      entry in ``pairs``; no separate average or median statistics are given);
+    * the **error** ``|L_PS − L_AE|`` minimum / median / average / maximum.
     """
     payload: Dict[str, object] = {
         "plot_json": str(spec.path),
@@ -284,12 +293,12 @@ def parser_json(spec: PlotSpec, files: Sequence[DlogFile],
 
 
 def write_json(path: Path, payload: Mapping[str, object]) -> Path:
-    """把 payload 写成 JSON（供 ``parser.json``）。"""
+    """Write ``payload`` as JSON (used for ``parser.json``)."""
     path = Path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
                         encoding="utf-8")
     except OSError as exc:
-        raise PlotError(f"写不了 {path}：{exc}") from exc
+        raise PlotError(f"cannot write {path}: {exc}") from exc
     return path

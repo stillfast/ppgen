@@ -1,12 +1,17 @@
-"""``rcloc_scan``：扫 ``&inputp`` 的 ``rcloc``（局域势的芯半径）。
+"""``rcloc_scan``: scan ``rcloc`` of ``&inputp`` (the core radius of the local potential).
 
-与前两个扫描工作流同一个套路，差别只在"扫的是 namelist 里的一个标量"：
+The same set-up as the other two scanning workflows; the only difference is that
+what is scanned here is a **scalar inside a namelist**:
 
-* 扫描中心取 ``&inputp`` 里现在的 ``rcloc``，``rcloc_range`` 是相对它的偏移；
-* 每个点落在 ``runs/rcloc/rcloc_<值>/U.in``，只改 ``&inputp`` 的 ``rcloc``；
-* 它影响**整份赝势**（所有通道），所以判据看**全部通道**（``channels=()``）；
-* ``update: true`` 把最佳 ``rcloc`` 写回 ``&inputp`` 那一行（只换那个数，
-  行尾注释与文件其余部分不动；键不在就插到段末）。
+* the scan center is the current ``rcloc`` in ``&inputp``, and ``rcloc_range`` is
+  an offset from it;
+* every point lands in ``runs/rcloc/rcloc_<value>/U.in`` and changes only the
+  ``rcloc`` of ``&inputp``;
+* it affects the **whole pseudopotential** (all channels), so the criterion looks
+  at **all channels** (``channels=()``);
+* ``update: true`` writes the best ``rcloc`` back into that ``&inputp`` line
+  (only that number changes, the trailing comment and the rest of the file stay;
+  a missing key is inserted at the end of the section).
 """
 from __future__ import annotations
 
@@ -25,11 +30,12 @@ from pp_gen.ld1.runner import output_json, run
 from pp_gen.scans import apply as apply
 from pp_gen.writing import namelists as namelists
 
-#: 假 ld1.x：从 stdin 里的 ``&inputp`` 读 rcloc，按"离目标差多少"挪 PS 极点。
-#: **四个通道一起挪** —— 这样"多通道池化"那条路径真的被走到了。
+#: Fake ld1.x: read rcloc from the ``&inputp`` on stdin and shift the PS poles by
+#: "how far it is from the target". **All four channels move together** -- that way
+#: the "multi-channel pooling" path is really exercised.
 FAKE_LD1 = '''\
 #!/usr/bin/env python3
-"""假 ld1.x：按 U.in 里 rcloc 离目标差多少造两份对数导数（所有通道一起挪）。"""
+"""Fake ld1.x: build two logarithmic derivatives from how far the rcloc in U.in is from the target (all channels move together)."""
 import re
 import sys
 
@@ -84,7 +90,7 @@ test:
 
 def write_root(tmp_path: Path, *, range_yml: str,
                cards: str = CARDS_YML) -> Path:
-    """一个自足的 rcloc_scan run 目录 + 假 ld1.x。"""
+    """A self-contained rcloc_scan run directory + a fake ld1.x."""
     root = tmp_path / "rcloc_scan"
     params = root / "parameters"
     (params / "input").mkdir(parents=True)
@@ -121,21 +127,21 @@ def rcloc_of(text: str) -> float:
     for line in text.splitlines():
         if line.strip().startswith("rcloc:"):
             return float(line.split(":", 1)[1].split("#")[0])
-    raise AssertionError(f"没有 rcloc 那一行：\n{text}")
+    raise AssertionError(f"there is no rcloc line:\n{text}")
 
 
 # --------------------------------------------------------------------------
-# 读中心 / 算点 / 打进参数
+# Read the center / compute the points / stamp them into the parameters
 # --------------------------------------------------------------------------
 def test_namelist_center_comes_from_inputp():
     sections = {"inputp": {"rcloc": 2.5, "lloc": -2}}
 
     assert scan.namelist_center(sections) == pytest.approx(2.5)
-    with pytest.raises(ParameterError, match="读不出 rcloc"):
+    with pytest.raises(ParameterError, match="no &inputp section"):
         scan.namelist_center({"input": {"iswitch": 3}})
-    with pytest.raises(ParameterError, match="没有可用的 rcloc"):
+    with pytest.raises(ParameterError, match="no usable rcloc"):
         scan.namelist_center({"inputp": {"lloc": -2}})
-    with pytest.raises(ParameterError, match="必须是正数"):
+    with pytest.raises(ParameterError, match="must be positive"):
         scan.namelist_center({"inputp": {"rcloc": 0.0}})
 
 
@@ -149,17 +155,17 @@ def test_namelist_points_are_offsets_around_the_center():
         "runs/rcloc/rcloc_2p65", "runs/rcloc/rcloc_2p8"]
     assert points[0].axis.key == "rcloc"
     assert points[0].group == "rcloc"
-    assert points[0].channel is None                # 没有"被扫的通道"
-    assert points[0].channels == ()                 # 空元组 = 全部通道
+    assert points[0].channel is None                # there is no "scanned channel"
+    assert points[0].channels == ()                 # an empty tuple = all channels
 
 
 def test_namelist_points_filter_and_positive_check():
     one = scan.namelist_points(2.5, [-0.5, 0.5, 0.25], values=[2.25])
     assert [point.value for point in one] == pytest.approx([2.25])
-    with pytest.raises(ParameterError, match="一个扫描点都不剩"):
+    with pytest.raises(ParameterError, match="no scan point left after filtering"):
         scan.namelist_points(2.5, [-0.5, 0.5, 0.25], values=[9.9])
 
-    with pytest.raises(ParameterError, match="不是正数"):
+    with pytest.raises(ParameterError, match="is not positive"):
         scan.namelist_points(0.2, [-0.5, 0.5, 0.25])
 
 
@@ -172,23 +178,23 @@ def test_apply_namelist_touches_only_that_key():
     assert out["inputp"]["rcloc"] == pytest.approx(1.5)
     assert out["inputp"]["lloc"] == -2
     assert out["input"] == {"iswitch": 3}
-    assert sections["inputp"]["rcloc"] == pytest.approx(2.5)   # 原参数没被改
+    assert sections["inputp"]["rcloc"] == pytest.approx(2.5)   # the source parameters were not modified
 
 
 # --------------------------------------------------------------------------
-# 写回
+# Write-back
 # --------------------------------------------------------------------------
 def test_write_namelist_value_keeps_the_rest_of_the_line(tmp_path):
     path = tmp_path / "cards.yml"
-    path.write_text("inputp:\n  pseudotype: 2\n  rcloc: 2.5   # 芯半径\n"
+    path.write_text("inputp:\n  pseudotype: 2\n  rcloc: 2.5   # core radius\n"
                     "  lloc: -2\ntest:\n  nconf: 1\n", encoding="utf-8")
 
     assert namelists.write_namelist_value(path, "inputp", "rcloc", 1.5) is True
     text = path.read_text(encoding="utf-8")
-    assert "  rcloc: 1.5   # 芯半径\n" in text
+    assert "  rcloc: 1.5   # core radius\n" in text
     assert "  pseudotype: 2\n" in text and "  lloc: -2\n" in text
     assert "test:\n  nconf: 1\n" in text
-    # 值没变（写法不同也算没变）就不再写
+    # a value that has not changed (however it is spelled) is not written again
     assert namelists.write_namelist_value(path, "inputp", "rcloc", 1.500) is False
 
 
@@ -200,15 +206,15 @@ def test_write_namelist_value_inserts_a_missing_key(tmp_path):
     assert namelists.write_namelist_value(path, "inputp", "rcloc", 2.0) is True
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "inputp:"
-    assert lines[1] == "  rcloc: 2.0"               # 插在段内第一行
+    assert lines[1] == "  rcloc: 2.0"               # inserted as the first line of the section
     assert "  pseudotype: 2" in lines
 
-    with pytest.raises(ParameterError, match="找不到 &input"):
+    with pytest.raises(ParameterError, match="has no &input section"):
         namelists.write_namelist_value(path, "input", "rcloc", 2.0)
 
 
 # --------------------------------------------------------------------------
-# prepare / run 端到端
+# prepare / run end to end
 # --------------------------------------------------------------------------
 def test_prepare_writes_one_input_per_value(scan_root):
     result = prepare(scan_root / "input.json")
@@ -223,30 +229,32 @@ def test_prepare_writes_one_input_per_value(scan_root):
 
 
 def test_run_updates_the_best_rcloc(scan_root):
-    """目标 1.5 在范围里（中心 2.5 - 0.15×…，2.5-0.75 那种不在）：挑最接近的。"""
+    """The target 1.5 is inside the range (center 2.5 - 0.15 x ..., 2.5-0.75 is not): pick the closest."""
     batch = run(scan_root / "input.json")
 
     row = batch.updates[0]
     assert row.orbital == "rcloc" and row.axis.key == "rcloc"
     assert row.previous == pytest.approx(2.5)
-    assert row.value == pytest.approx(2.2)          # 范围 2.2…2.8 里离 1.5 最近
+    assert row.value == pytest.approx(2.2)          # of 2.2...2.8 the closest to 1.5
     assert row.written is True
     assert rcloc_of(cards_text(scan_root)) == pytest.approx(2.2)
-    assert "lloc: -2" in cards_text(scan_root)      # 同一段里别的键没动
+    assert "lloc: -2" in cards_text(scan_root)      # the other keys of the same section did not move
 
 
 def test_the_criterion_covers_all_channels(tmp_path):
-    """``channels=()``：所有通道都要算 —— l=1 对不上就不能算"重合"。
+    """``channels=()``: every channel has to be counted -- when l=1 does not match it
+    cannot count as "coinciding".
 
-    顺带守住一个坑：PS 在窗口里**根本没有极点**时，``pairs`` 是空的，
-    按"ΔE 合计"排会得到 0（看着最好）—— 个数不一样必须记 ``inf``。
+    It also guards a trap: when the PS has **no pole at all** inside the window,
+    ``pairs`` is empty and ranking by "total ΔE" would give 0 (looking best) -- a
+    different pair count must be recorded as ``inf``.
     """
     from conftest import write_dlog
 
     rows_ae = [[round(-1.0 + 0.05 * i, 10),
                 100.0 if -1.0 + 0.05 * i < 0.0 else -100.0,
                 100.0 if -1.0 + 0.05 * i < 0.0 else -100.0] for i in range(41)]
-    rows_ps = [[e, l0, 100.0] for e, l0, _ in rows_ae]        # l=1 没有极点
+    rows_ps = [[e, l0, 100.0] for e, l0, _ in rows_ae]        # l=1 has no pole
     write_dlog(tmp_path, "ld1.dlog", rows_ae)
     write_dlog(tmp_path, "ld1ps.dlog", rows_ps)
     spec = update.UpdateSpec(enabled=True, window=(-1.0, 1.0))
@@ -255,9 +263,9 @@ def test_the_criterion_covers_all_channels(tmp_path):
     assert one.coincide is True and one.delta == pytest.approx(0.0)
 
     every = update.measure(tmp_path, "rcloc", 2.5, spec=spec, channels=())
-    assert every.channel is None                             # 不只一个通道
-    assert every.coincide is False                           # l=1 少了极点
-    assert every.delta == float("inf")                       # 不能算 0
+    assert every.channel is None                             # not just one channel
+    assert every.coincide is False                           # l=1 is missing a pole
+    assert every.delta == float("inf")                       # must not count as 0
 
 
 def test_failed_points_are_skipped(scan_root):
@@ -272,8 +280,9 @@ def test_failed_points_are_skipped(scan_root):
 
     batch = run(scan_root / "input.json")
 
-    # 2.5 那个点（shift=1.0，不是 0）……把"完美点"排除掉：范围里没有 1.5 的点
-    # 这里只核对：失败的点不进候选、更新照常给出一个值
+    # the point 2.5 (shift=1.0, not 0) ... leaves the "perfect point" out: no point
+    # of the range is 1.5. Here we only check: failed points do not become
+    # candidates and the update still yields a value
     assert batch.updates[0].value is not None
 
 
@@ -299,7 +308,7 @@ def test_cli_reports_the_rcloc_scan(tmp_path, monkeypatch, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "更新 rcloc: rcloc → 2.2 bohr（原 2.5）" in out
+    assert "update rcloc: rcloc -> 2.2 bohr (was 2.5)" in out
     assert rcloc_of(cards_text(root)) == pytest.approx(2.2)
 
 
@@ -309,7 +318,7 @@ def test_cli_prepare_lists_the_values(scan_root, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "&inputp 的 rcloc × 1 个点 = 1 个扫描点" in out
+    assert "&inputp rcloc × 1 points = 1 scan points" in out
     assert "->  " in out and "rcloc_*/" in out
 
 
@@ -317,12 +326,12 @@ def test_range_is_required(tmp_path, monkeypatch):
     root = write_root(tmp_path, range_yml="update: true\n")
     monkeypatch.setenv(config.ENV_PARAMETERS, str(root / "parameters"))
 
-    with pytest.raises(Exception, match="里没有范围"):
+    with pytest.raises(Exception, match="have no range"):
         prepare(root / "input.json")
 
 
 # --------------------------------------------------------------------------
-# 报告：这类量按"所有通道"排序
+# Report: a quantity of this kind is ranked over "all channels"
 # --------------------------------------------------------------------------
 def test_report_falls_back_to_all_channels(scan_root, tmp_path):
     from pp_gen.reporting import report as report_mod
@@ -339,15 +348,15 @@ def test_report_falls_back_to_all_channels(scan_root, tmp_path):
 
     result = report_mod.report([out, plot_json], metric="median")
 
-    assert result.scope == "all"                     # 自动改成所有通道池化
-    assert any("rcloc" in text and "所有通道池化" in text
+    assert result.scope == "all"                     # automatically switched to pooling all channels
+    assert any("rcloc" in text and "pool all channels" in text
                for text in result.warnings)
     assert "rcloc (bohr)" in result.markdown
-    assert "l=全部" in result.markdown
+    assert "l=all" in result.markdown
     assert "rcloc = 2.2 bohr" in result.markdown
 
 
 def test_update_target_text_mentions_the_section():
     target = update.Target(group="rcloc", label="rcloc", axis=scan.RCLOC_AXIS,
                            section="inputp")
-    assert target.text() == "rcloc（&inputp 的 rcloc）"
+    assert target.text() == "rcloc (&inputp rcloc)"

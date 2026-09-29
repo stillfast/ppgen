@@ -17,5 +17,5 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         return args.func(args)
     except PpGenError as exc:
-        print(f"{PROG}: 错误：{exc}", file=sys.stderr)
+        print(f"{PROG}: error: {exc}", file=sys.stderr)
         return 2

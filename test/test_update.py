@@ -1,13 +1,17 @@
-"""``update: true``：扫完一个轨道就把它的 ``rcut`` 更新成最佳值。
+"""``update: true``: after finishing one orbital, its ``rcut`` becomes the best value.
 
-用假 ``ld1.x`` 端到端跑：假程序从当前目录名认出被扫的轨道，按"这个轨道的 rcut
-离目标值差多少"造 ``ld1.dlog`` / ``ld1ps.dlog``（AE 极点固定在 0，PS 极点挪开
-那个差值），于是**最佳点就是目标值**，可以逐条核对：
+The whole path runs end to end with a fake ``ld1.x``: the fake program recognises the
+orbital being scanned from the name of the current directory and builds ``ld1.dlog`` /
+``ld1ps.dlog`` from "how far that orbital's rcut is from the target value" (the AE pole
+stays fixed at 0, the PS pole is displaced by that difference), so **the best scan point
+is the target value** and every detail can be checked one by one:
 
-* 挑最佳用的判据与 ``ppgen report --pole`` 一致；
-* 更新写回**提供 orbitals 卡片的那份参数**，只动那几行（同一个标签有多张卡片
-  ——多投影子——时一起改，见 ``test_write_card_rcut_moves_every_card_of_that_label``）；
-* **逐轨道串行**：6S 更新完之后，5F 的输入里 6S 已经是新值。
+* the criterion used to pick the best point matches ``ppgen report --pole``;
+* the update writes back **the parameter file that provides the orbitals card**, touching
+  only those lines (when one label has several cards -- several projection operators --
+  they change together, see ``test_write_card_rcut_moves_every_card_of_that_label``);
+* **orbitals run one after another**: once 6S has been updated, 6S already holds the new
+  value in the input of 5F.
 """
 from __future__ import annotations
 
@@ -28,7 +32,8 @@ from pp_gen.writing import cards as cards
 
 FAKE_LD1 = '''\
 #!/usr/bin/env python3
-"""假 ld1.x：按"被扫轨道的 rcut 离目标差多少"造两份对数导数。"""
+"""A fake ld1.x: build two log-derivative files from "how far the scanned
+orbital's rcut is from the target value"."""
 import pathlib
 import sys
 
@@ -41,14 +46,14 @@ for line in text.splitlines():
     if len(parts) >= 8 and parts[1].isdigit():
         cards[parts[0]] = float(parts[5])
 
-# 目录名 runs/<轨道>/rc_<值> 里就有被扫的轨道
+# the directory name runs/<orbital>/rc_<value> carries the scanned orbital
 orbital = pathlib.Path.cwd().parent.name
 shift = abs(cards.get(orbital, 0.0) - TARGET.get(orbital, 0.0))
 
 rows = []
 for index in range(41):
     energy = round(-1.0 + 0.05 * index, 10)
-    # |L| = 100 保证被判成极点；PS 的极点挪到 shift 处
+    # |L| = 100 guarantees it is read as a pole; the PS pole moves to shift
     ae = 100.0 if energy < 0.0 else -100.0
     ps = 100.0 if energy < shift else -100.0
     rows.append((energy, ae, ps))
@@ -77,8 +82,8 @@ inputp:
   file_pseudopw: 'U.pbe-n-nc.UPF'
 n_orbitals: 2
 orbitals:
-  - ['6S', 1, 0, 2.00, 0.00, 1.3, 1.3, 0.0]        # 目标 1.2
-  - ['5F', 4, 3, 3.00, 0.00, 1.1, 1.1, 0.0]        # 目标 1.0
+  - ['6S', 1, 0, 2.00, 0.00, 1.3, 1.3, 0.0]        # target 1.2
+  - ['5F', 4, 3, 3.00, 0.00, 1.1, 1.1, 0.0]        # target 1.0
 test:
   nconf: 1
   'configts(1)': '5f3 6s2'
@@ -88,7 +93,7 @@ test:
 
 def write_root(tmp_path: Path, *, range_yml: str,
                cards: str = CARDS_YML) -> Path:
-    """一个自足的 rc_scan run 目录（2 个轨道 × 7 个点）+ 假 ld1.x。"""
+    """A self-contained rc_scan run directory (2 orbitals × 7 points) + fake ld1.x."""
     root = tmp_path / "rc_scan"
     params = root / "parameters"
     (params / "input").mkdir(parents=True)
@@ -109,7 +114,7 @@ def write_root(tmp_path: Path, *, range_yml: str,
 
 @pytest.fixture()
 def scan_root(tmp_path, monkeypatch) -> Path:
-    """开到 ``update: true`` 的扫描目录（参数目录指到它自己的 parameters/）。"""
+    """A scan directory with ``update: true`` (parameter dir = its own parameters/)."""
     root = write_root(tmp_path, range_yml="rc_range: [-0.3, 0.3, 0.1]\n"
                                            "update: true\n")
     monkeypatch.setenv(config.ENV_PARAMETERS, str(root / "parameters"))
@@ -122,21 +127,21 @@ def cards_text(root: Path) -> str:
 
 
 def rcut_of(text: str, label: str) -> float:
-    """从参数 YAML 里读某个轨道卡片的 rcut。"""
+    """Read the rcut of one orbital card from the parameter YAML."""
     match = re.search(rf"\[{label!r},\s*(?:[^,\]]+,\s*){{4}}([\d.]+)",
                       text)
-    assert match, f"没找到 {label} 的卡片"
+    assert match, f"no card found for {label}"
     return float(match.group(1))
 
 
 def point_input(root: Path, orbital: str, rcut: float) -> str:
-    """读某个扫描点的 U.in（目录名 rc_<值> 的写法见 scan.rc_label）。"""
+    """Read U.in of one scan point (directory name rc_<value> via scan.rc_label)."""
     path = root / "runs" / orbital / scan.rc_label(rcut) / "U.in"
     return path.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
-# 读开关
+# Reading the switch
 # --------------------------------------------------------------------------
 def test_update_flag_is_read():
     assert update.read_spec({}) == update.UpdateSpec(enabled=False)
@@ -157,9 +162,9 @@ def test_update_flag_is_read():
 
 
 def test_update_flag_rejects_nonsense():
-    with pytest.raises(ParameterError, match="只能是 true/false"):
+    with pytest.raises(ParameterError, match="must be true/false"):
         update.read_spec({"update": "yes"})
-    with pytest.raises(ParameterError, match="不认识的键"):
+    with pytest.raises(ParameterError, match="has unknown keys"):
         update.read_spec({"update": {"criteron": "pole"}})
     with pytest.raises(ParameterError, match="criterion"):
         update.read_spec({"update": {"criterion": "whatever"}})
@@ -170,7 +175,7 @@ def test_update_flag_rejects_nonsense():
 
 
 def test_update_key_is_not_reported_as_ignored(scan_root, monkeypatch):
-    """``update`` 是认得出来的键，不该报"已被忽略"。"""
+    """``update`` is a recognised key, so it must not be reported as ignored."""
     from pp_gen.inputs import generation as prepare_mod
 
     result = prepare_mod.prepare(scan_root / "input.json", write_output=False)
@@ -178,11 +183,11 @@ def test_update_key_is_not_reported_as_ignored(scan_root, monkeypatch):
     assert result.scan_sections["update"] is True
     assert result.cards_file == (scan_root / "parameters" / "input"
                                  / "rc_scan.yml")
-    assert not any("已被忽略" in text for text in result.warnings)
+    assert not any("has been ignored" in text for text in result.warnings)
 
 
 # --------------------------------------------------------------------------
-# 写回参数文件
+# Writing back the parameter file
 # --------------------------------------------------------------------------
 def test_write_card_rcut_only_touches_that_line(tmp_path):
     path = tmp_path / "cards.yml"
@@ -195,21 +200,23 @@ def test_write_card_rcut_only_touches_that_line(tmp_path):
     assert len(before) == len(after)
     changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
     assert len(changed) == 1
-    # 行尾注释也原样留着
+    # the trailing comment is kept as is
     assert after[changed[0]] == \
-        "  - ['5F', 4, 3, 3.00, 0.00, 1.0, 1.0, 0.0]        # 目标 1.0"
+        "  - ['5F', 4, 3, 3.00, 0.00, 1.0, 1.0, 0.0]        # target 1.0"
 
 
 def test_write_card_rcut_moves_every_card_of_that_label(tmp_path):
-    """多投影子：两张 5F 一起写回同一个 r_c，其它卡片与 ener 都不动。
+    """Several projection operators: both 5F cards are written back to the same r_c,
+    while the other cards and the ener values stay untouched.
 
-    扫描点（``apply.apply``）就是按标签联动的，写回必须一样 —— 否则 YAML 里
-    两张 5F 会一个 1.0 一个 1.1，而扫描中心取第一张、扫描点又把两张改成同值。
+    Scan points (``apply.apply``) move together by label and the write back must do the
+    same -- otherwise the two 5F cards in the YAML would end up one 1.0 and one 1.1,
+    while the scan centre takes the first card and the scan points set both to one value.
     """
     path = tmp_path / "cards.yml"
     text = CARDS_YML.replace(
-        "  - ['5F', 4, 3, 3.00, 0.00, 1.1, 1.1, 0.0]        # 目标 1.0\n",
-        "  - ['5F', 4, 3, 3.00, 0.00, 1.1, 1.1, 0.0]        # 目标 1.0\n"
+        "  - ['5F', 4, 3, 3.00, 0.00, 1.1, 1.1, 0.0]        # target 1.0\n",
+        "  - ['5F', 4, 3, 3.00, 0.00, 1.1, 1.1, 0.0]        # target 1.0\n"
         "  - ['6D', 3, 2, 0.00, -0.05, 2.0, 2.0, 0.0]\n"
         "  - ['5F', 4, 3, 0.00, -0.60, 1.1, 1.1, 0.0]\n")
     path.write_text(text, encoding="utf-8")
@@ -220,15 +227,15 @@ def test_write_card_rcut_moves_every_card_of_that_label(tmp_path):
     after = path.read_text(encoding="utf-8").splitlines()
     assert len(before) == len(after)
     changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
-    assert len(changed) == 2                                   # 两张 5F 都改了
+    assert len(changed) == 2                                   # both 5F cards changed
     assert after[changed[0]] == \
-        "  - ['5F', 4, 3, 3.00, 0.00, 1.0, 1.0, 0.0]        # 目标 1.0"
+        "  - ['5F', 4, 3, 3.00, 0.00, 1.0, 1.0, 0.0]        # target 1.0"
     assert after[changed[1]] == \
-        "  - ['5F', 4, 3, 0.00, -0.60, 1.0, 1.0, 0.0]"         # ener/occ 没碰
-    # 同一个 l 但标签不同的通道（6D）不动
+        "  - ['5F', 4, 3, 0.00, -0.60, 1.0, 1.0, 0.0]"         # ener/occ untouched
+    # a channel with the same l but a different label (6D) is untouched
     assert [line for line in after if "'6D'" in line] == \
         ["  - ['6D', 3, 2, 0.00, -0.05, 2.0, 2.0, 0.0]"]
-    # 两张都一样了，再写一次就什么都不做
+    # both cards are equal now, so writing again does nothing
     assert cards.write_card_rcut(path, "5F", 1.0) is False
     assert path.read_text(encoding="utf-8").splitlines() == after
 
@@ -237,7 +244,7 @@ def test_write_card_rcut_is_a_noop_when_unchanged(tmp_path):
     path = tmp_path / "cards.yml"
     path.write_text(CARDS_YML, encoding="utf-8")
 
-    assert cards.write_card_rcut(path, "5F", 1.1) is False       # 已经是这个值
+    assert cards.write_card_rcut(path, "5F", 1.1) is False       # already this value
     assert path.read_text(encoding="utf-8") == CARDS_YML
 
 
@@ -246,15 +253,15 @@ def test_write_card_rcut_reports_a_missing_card(tmp_path):
     path.write_text("orbitals:\n  - ['6S', 1, 0, 2.0, 0.0, 1.3, 1.3, 0.0]\n",
                     encoding="utf-8")
 
-    with pytest.raises(ParameterError, match="没有轨道 5F"):
+    with pytest.raises(ParameterError, match=r"has no \*\*list-style\*\* card for orbital 5F"):
         cards.write_card_rcut(path, "5F", 1.0)
 
 
 # --------------------------------------------------------------------------
-# 挑最佳（判据与 report --pole 一致）
+# Picking the best point (same criterion as report --pole)
 # --------------------------------------------------------------------------
 def _write_dlogs(directory: Path, *, shift: float, channel: int = 3) -> None:
-    """造一对 dlog：AE 极点在 0，PS 极点挪到 ``shift``。"""
+    """Build a pair of dlogs: the AE pole sits at 0, the PS pole moves to ``shift``."""
     rows = []
     for index in range(41):
         energy = round(-1.0 + 0.05 * index, 10)
@@ -271,7 +278,7 @@ def _write_dlogs(directory: Path, *, shift: float, channel: int = 3) -> None:
 
 
 def test_choose_prefers_coincidence_then_delta(tmp_path):
-    """重合的赢；都不重合时 ΔE 小的赢。"""
+    """A coincident point wins; when none coincides, the smaller ΔE wins."""
     spec = update.UpdateSpec(enabled=True)
     far = tmp_path / "rc_0p8"
     near = tmp_path / "rc_0p9"
@@ -298,16 +305,16 @@ def test_measure_skips_points_without_dlogs(tmp_path):
 
 
 def test_median_criterion_is_honoured(tmp_path):
-    """``criterion: median`` 时只看 |ΔL| 中位数，不看极点。"""
+    """With ``criterion: median`` only the median |ΔL| counts, not the poles."""
     spec = update.update if False else update.UpdateSpec(enabled=True,
                                                          criterion="median")
     first, second = tmp_path / "rc_1p0", tmp_path / "rc_1p1"
     for directory in (first, second):
         directory.mkdir()
-    _write_dlogs(first, shift=0.0)          # 极点重合（ΔE=0）
+    _write_dlogs(first, shift=0.0)          # poles coincide (ΔE=0)
     _write_dlogs(second, shift=0.0)
 
-    # 给第二个点加一个大常数 -> 它的 |ΔL| 中位数大得多
+    # add a large constant to the second point -> its median |ΔL| is much larger
     for name in ("ld1.dlog", "ld1ps.dlog"):
         path = second / name
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -332,28 +339,28 @@ def test_median_criterion_is_honoured(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 端到端：逐轨道串行 + 写回
+# End to end: orbitals one after another + write back
 # --------------------------------------------------------------------------
 def test_run_updates_each_orbital_and_uses_the_new_value(scan_root):
     batch = run(scan_root / "input.json")
 
-    # 都被更新到"目标值"（假数据里最佳就是它）
+    # both are updated to the "target value" (which is the best point in the fake data)
     assert [(item.orbital, item.value, item.previous, item.written)
             for item in batch.updates] == [("6S", 1.2, 1.3, True),
                                           ("5F", 1.0, 1.1, True)]
     text = cards_text(scan_root)
     assert rcut_of(text, "6S") == pytest.approx(1.2)
     assert rcut_of(text, "5F") == pytest.approx(1.0)
-    # 只动这两行，别的（标题、其它列）原样
+    # only these two lines move, everything else (headings, other columns) is as is
     assert "n_orbitals: 2" in text and "deld: 0.02" in text
 
-    # 逐轨道串行：5F 的输入里 6S 用的是**更新后**的 1.2
+    # orbitals one after another: in the input of 5F, 6S uses the **updated** 1.2
     assert "6S  1  0  2.0  0.0  1.2  1.2  0.0" in point_input(
         scan_root, "5F", 1.0)
-    # 而 6S 自己的输入里，6S 正是那个被扫的点
+    # while in the input of 6S itself, 6S is exactly the orbital being scanned
     assert "6S  1  0  2.0  0.0  1.3  1.3  0.0" in point_input(
         scan_root, "6S", 1.3)
-    # 6S 扫在前，用的还是老的中心 1.3
+    # 6S is scanned first, so it still uses the old centre 1.3
     assert "5F  4  3  3.0  0.0  1.1  1.1  0.0" in point_input(
         scan_root, "6S", 1.3)
 
@@ -383,7 +390,7 @@ def test_update_can_be_turned_off(tmp_path, monkeypatch):
     batch = run(root / "input.json")
 
     assert batch.updates == () and batch.update_spec is None
-    assert cards_text(root) == CARDS_YML                  # 参数文件一个字没动
+    assert cards_text(root) == CARDS_YML                  # not a character of the parameter file changed
 
 
 def test_dry_run_does_not_update(scan_root):
@@ -391,11 +398,12 @@ def test_dry_run_does_not_update(scan_root):
 
     assert batch.updates == ()
     assert cards_text(scan_root) == CARDS_YML
-    assert any("干跑" in text and "不会更新" in text for text in batch.warnings)
+    assert any("dry run" in text and "no scanned value is updated" in text
+               for text in batch.warnings)
 
 
 def test_points_without_dlogs_do_not_update(tmp_path, monkeypatch):
-    """点都跑失败了（没有 dlog）就不更新，并说清楚为什么。"""
+    """When every point failed (no dlog) nothing is updated, and the reason is stated."""
     root = write_root(tmp_path, range_yml="rc_range: [-0.3, 0.3, 0.1]\n"
                                            "update: true\n")
     monkeypatch.setenv(config.ENV_PARAMETERS, str(root / "parameters"))
@@ -407,24 +415,25 @@ def test_points_without_dlogs_do_not_update(tmp_path, monkeypatch):
     batch = run(root / "input.json")
 
     assert [item.orbital for item in batch.updates] == ["6S", "5F"]
-    assert all(not item.written and "没有 ld1.dlog" in item.note
+    assert all(not item.written and "no scan point in this group has ld1.dlog" in item.note
                for item in batch.updates)
     assert cards_text(root) == CARDS_YML
 
 
 def test_a_failed_point_is_skipped_even_with_old_dlogs(tmp_path, monkeypatch):
-    """跑失败的点目录里留着上一轮的 dlog（甚至看着"完美"）也不能当候选。
+    """A failed point directory must not be a candidate, even when it keeps the dlog of
+    an earlier round that looks "perfect".
 
-    否则挑出来的"最佳 rcut"来自一个根本没跑出来的点（这次就踩过：6S 的
-    ``runs/6S/rc_0p9`` 里留着上一轮的 ``ld1ps.dlog``，300 点 vs 新 dlog 的
-    751 点，直接 IndexError）。
+    Otherwise the "best rcut" picked comes from a point that never ran: 6S's
+    ``runs/6S/rc_0p9`` may keep the ``ld1ps.dlog`` of an earlier round (300 points
+    against 751 points in the new dlog), which raises an IndexError at once.
     """
     root = write_root(tmp_path, range_yml="rc_range: [-0.3, 0.3, 0.1]\n"
                                            "update: true\n")
     monkeypatch.setenv(config.ENV_PARAMETERS, str(root / "parameters"))
     script = root / "fakebin" / "ld1.x"
-    # 目标值（6S 的 1.2，也就是"绝对最佳"）那个点跑失败：dlog 照样写出来，
-    # 但退出码非 0 —— 模拟被 QE 中途掐掉的点。
+    # The point holding the target value (6S at 1.2, the "absolute best") fails: the
+    # dlog is still written, but the exit code is non-zero, like a point killed by QE.
     script.write_text(FAKE_LD1.replace(
         'print("fake ld1.x done")',
         'if shift < 1e-9:\n'
@@ -436,10 +445,10 @@ def test_a_failed_point_is_skipped_even_with_old_dlogs(tmp_path, monkeypatch):
     batch = run(root / "input.json", only=["6S"])
 
     stale = root / "runs" / "6S" / scan.rc_label(1.2)
-    assert (stale / "ld1.dlog").is_file()               # 旧 dlog 还在
+    assert (stale / "ld1.dlog").is_file()               # the old dlog is still there
     failed = [item for item in batch.runs if item.run_dir == stale.resolve()]
     assert failed and not failed[0].ok and failed[0].returncode == 1
-    # 1.2 被跳过 -> 剩下 1.1 / 1.3 并列（|shift| 都是 0.1），取小的那个
+    # 1.2 is skipped -> 1.1 and 1.3 tie (both have |shift| = 0.1), so the smaller one wins
     update_row = batch.updates[0]
     assert update_row.value == 1.1
     assert update_row.directory == (root / "runs" / "6S" / scan.rc_label(1.1))
@@ -447,23 +456,24 @@ def test_a_failed_point_is_skipped_even_with_old_dlogs(tmp_path, monkeypatch):
 
 
 def test_the_internal_per_orbital_filter_is_not_reported(scan_root):
-    """逐轨道串行执行时内部会传 ``only=[轨道]``（那不是用户写的过滤），
-    不该冒出"按 --only/--rc 过滤后只剩 N 个扫描点"这种提醒。"""
+    """Running orbitals one after another passes ``only=[orbital]`` internally, which is
+    not a filter written by the user, so no "only N scan points left after filtering by
+    --only/--rc" reminder may appear."""
     batch = run(scan_root / "input.json")
 
-    assert any(item.written for item in batch.updates)          # 确实走了逐轨道
-    assert not any("过滤后只剩" in text for text in batch.warnings)
+    assert any(item.written for item in batch.updates)          # the per-orbital path was really taken
+    assert not any("filtering left" in text for text in batch.warnings)
 
 
 def test_a_filter_the_user_wrote_is_still_reported(scan_root):
     batch = run(scan_root / "input.json", only=["5F"])
 
-    assert any("过滤后只剩" in text and "--only" in text
+    assert any("filtering left" in text and "--only" in text
                for text in batch.warnings)
 
 
 def test_the_update_uses_the_scan_range_window(tmp_path, monkeypatch):
-    """窗口默认取 &input 的 eminld/emaxld；``window`` 写进 update 里就按它来。"""
+    """The window defaults to eminld/emaxld of &input; ``window`` in update overrides it."""
     root = write_root(tmp_path, range_yml=(
         "rc_range: [-0.3, 0.3, 0.1]\n"
         "update: {criterion: pole, window: [0.2, 1.0]}\n"))
@@ -483,8 +493,8 @@ def test_cli_run_reports_the_updates(scan_root, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "更新设置   :" in out and "极点是否重合" in out
-    assert "更新 rcut: 6S → 1.2 bohr（原 1.3）" in out
-    assert "最佳点 " in out and "runs/6S/rc_1p2" in out
-    assert "已写回 " in out and "rc_scan.yml" in out
-    assert "更新 rcut: 5F → 1.0 bohr（原 1.1）" in out
+    assert "update     : " in out and "poles coincide -> total pole ΔE" in out
+    assert "update rcut: 6S -> 1.2 bohr (was 1.3)" in out
+    assert "best point " in out and "runs/6S/rc_1p2" in out
+    assert "written back to " in out and "rc_scan.yml" in out
+    assert "update rcut: 5F -> 1.0 bohr (was 1.1)" in out

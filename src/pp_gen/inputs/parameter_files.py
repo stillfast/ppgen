@@ -1,15 +1,19 @@
-"""参数 YAML 的定位、读入与合并。
+"""Locating, reading and merging the parameter YAML files.
 
-``input.json`` 里的 ``parameters`` 是"参数组名 -> YAML 名"的映射，例如::
+``parameters`` in ``input.json`` maps "parameter group name -> YAML name", for
+example::
 
     "parameters": {"input": "ae_radial"}
 
-对应 :file:`parameters/input/ae_radial.yml`。约定：
+which points at :file:`parameters/input/ae_radial.yml`. Conventions:
 
-* 组名既是 ``parameters/`` 下的**子目录名**，也是 YAML 里的**段名**
-  （``input`` -> ``ld1.x`` 的 ``&input`` 段）。
-* YAML 的每个顶层键都是一个 namelist 段名，值是该段的变量表。
-* YAML 变量名、段名都由渲染端再做一次合法性校验（见 :mod:`pp_gen.ld1_input`）。
+* the group name is both the **subdirectory name** under ``parameters/`` and the
+  **section name** inside the YAML (``input`` -> the ``&input`` section of
+  ``ld1.x``);
+* every top-level key of the YAML is a namelist section name and its value is the
+  variable table of that section;
+* YAML variable names and section names are validated once more on the rendering
+  side (see :mod:`pp_gen.inputs.ld1_input_writer`).
 """
 from __future__ import annotations
 
@@ -25,16 +29,16 @@ from .ld1_input_writer import CARD_KEYS
 
 @dataclass(frozen=True)
 class ParameterSet:
-    """一个参数组对应的 YAML 文件及其内容。"""
+    """The YAML file behind one parameter group and its content."""
 
     group: str
-    name: str                                   # input.json 里写的名字（不含 .yml）
+    name: str                                   # the name written in input.json (no .yml)
     path: Path
-    sections: Mapping[str, Mapping[str, Any]]   # 段名 -> 变量表
+    sections: Mapping[str, Mapping[str, Any]]   # section name -> variable table
 
 
 def resolve(group: str, name: str, root: Path) -> Path:
-    """按组名 + YAML 名找出参数文件。找不到时把找过的地方都列出来。"""
+    """Find the parameter file from the group name + YAML name; when nothing is found, every place tried is listed."""
     root = Path(root)
     stem = name[:-4] if name.endswith(".yml") else name
     tried: List[Path] = []
@@ -55,38 +59,41 @@ def resolve(group: str, name: str, root: Path) -> Path:
         return hits[0]
     if len(hits) > 1:
         raise ParameterError(
-            f"参数名 '{stem}' 在 {root} 下有 {len(hits)} 个同名文件，无法确定用哪个："
-            f"{[str(p) for p in hits]}。请把 input.json 写成 "
-            f"'parameters': {{'{group}': '<子目录名>/<文件名>'}} 这种更明确的形式")
+            f"the parameter name '{stem}' matches {len(hits)} files under {root}, "
+            f"so which one to use is ambiguous: "
+            f"{[str(p) for p in hits]}. Write input.json in the more explicit "
+            f"form 'parameters': {{'{group}': '<subdirectory>/<file>'}}")
 
     raise ParameterError(
-        f"找不到参数组 '{group}' 要用的 YAML '{stem}.yml'。找过：\n  "
+        f"no YAML '{stem}.yml' found for parameter group '{group}'. Tried:\n  "
         + "\n  ".join(str(p) for p in tried)
-        + (f"\n  （也递归找过 {root}，没有同名的唯一文件）" if root.is_dir() else "")
-        + f"\n参数目录：{root}（可用环境变量 PPGEN_PARAMETERS 覆盖）")
+        + (f"\n  (also searched {root} recursively, no single file of that name)" if root.is_dir() else "")
+        + f"\nparameter directory: {root} (override with the PPGEN_PARAMETERS environment variable)")
 
 
 def load_set(group: str, name: str, root: Path, *,
              require_section: bool = True) -> ParameterSet:
-    """读一个参数组的 YAML。
+    """Read the YAML of one parameter group.
 
-    ``require_section=False`` 用于**辅助参数组**（如 ``rc_scan_range``）：那类
-    文件不是 namelist 段，而是工作流自己的数据（如 ``rc_range``），所以不要求
-    "段名与组名相同"，每个顶层值也不必是映射。
+    ``require_section=False`` is for **auxiliary parameter groups** (such as
+    ``rc_scan_range``): those files are not namelist sections but the workflow's
+    own data (such as ``rc_range``), so the section name need not equal the group
+    name and each top-level value need not be a mapping.
     """
     path = resolve(group, name, root)
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise ParameterError(f"读不了 {path}：{exc}") from exc
+        raise ParameterError(f"cannot read {path}: {exc}") from exc
     except yaml.YAMLError as exc:
-        raise ParameterError(f"{path} 不是合法 YAML：{exc}") from exc
+        raise ParameterError(f"{path} is not valid YAML: {exc}") from exc
 
     if data is None:
-        raise ParameterError(f"{path} 是空文件 —— 里面应当有段名与变量，例如 'input:'")
+        raise ParameterError(f"{path} is empty -- it should hold sections and variables, e.g. 'input:'")
     if not isinstance(data, dict):
         raise ParameterError(
-            f"{path} 的顶层必须是「段名: 变量表」映射，实际是 {type(data).__name__}")
+            f"the top level of {path} must be a mapping of 'section: variable table', "
+            f"got {type(data).__name__}")
 
     sections: Dict[str, Any] = {}
     for section, body in data.items():
@@ -94,34 +101,38 @@ def load_set(group: str, name: str, root: Path, *,
             sections[section] = body
             continue
         if not isinstance(section, str):
-            raise ParameterError(f"{path} 里有非字符串段名：{section!r}")
+            raise ParameterError(f"{path} has a non-string section name: {section!r}")
         if section in CARD_KEYS:
-            # 卡片相关（n_orbitals / orbitals）：值是数字/列表，不是 namelist 段
+            # card related (n_orbitals / orbitals): the value is a number or a
+            # list, not a namelist section
             sections[section] = body
             continue
         if body is None:
             body = {}
         if not isinstance(body, dict):
             raise ParameterError(
-                f"{path} 的段 '{section}' 必须是「变量名: 值」映射，"
-                f"实际是 {type(body).__name__}")
+                f"section '{section}' of {path} must be a mapping of "
+                f"'variable name: value', got {type(body).__name__}")
         sections[section] = {str(k): v for k, v in body.items()}
     if not sections:
-        raise ParameterError(f"{path} 里一个段都没有")
+        raise ParameterError(f"{path} has no section at all")
 
-    # 组名与段名的一致性：parameters 的键就是拿来当段名用的，对不上多半是写错了
+    # Consistency of group name and section name: the keys of parameters are used
+    # as section names, so a mismatch is almost certainly a typo
     if require_section and group not in sections:
         raise ParameterError(
-            f"{path} 里没有 '{group}:' 段（input.json 把这个文件的组名写成 "
-            f"'{group}'，渲染时就要找同名段）。文件里的段：{sorted(sections)}")
+            f"{path} has no '{group}:' section (input.json gives this file the "
+            f"group name '{group}', and rendering then looks for a section of "
+            f"that name). Sections in the file: {sorted(sections)}")
     return ParameterSet(group=group, name=name, path=path, sections=sections)
 
 
 def merge(sets: Iterable[ParameterSet]) -> Dict[str, Any]:
-    """把若干参数组合并成"段名 -> 变量表"（保序）。
+    """Merge several parameter groups into "section name -> variable table" (key order preserved).
 
-    同一个变量被两个文件赋了不同的值就是错：静默取后者会让 ``U.in`` 与
-    参数文件对不上，而这正是最难查的一类问题。
+    One variable given different values by two files is an error: silently
+    keeping the later value would leave ``U.in`` inconsistent with the parameter
+    files, and that is the hardest class of problem to track down.
     """
     merged: Dict[str, Any] = {}
     origin: Dict[Tuple[str, str], Path] = {}
@@ -130,8 +141,8 @@ def merge(sets: Iterable[ParameterSet]) -> Dict[str, Any]:
             if section in CARD_KEYS:
                 if section in merged and merged[section] != body:
                     raise ParameterError(
-                        f"参数 '{section}' 被重复定义且取值不同："
-                        f"{origin.get((section, ''), '?')} 与 {pset.path}")
+                        f"parameter '{section}' is defined twice with different "
+                        f"values: {origin.get((section, ''), '?')} and {pset.path}")
                 merged[section] = body
                 origin[(section, "")] = pset.path
                 continue
@@ -139,16 +150,16 @@ def merge(sets: Iterable[ParameterSet]) -> Dict[str, Any]:
             for key, value in body.items():
                 if key in target and target[key] != value:
                     raise ParameterError(
-                        f"参数 '{section}.{key}' 被重复定义且取值不同："
-                        f"{origin[(section, key)]} 给的是 {target[key]!r}，"
-                        f"{pset.path} 给的是 {value!r}")
+                        f"parameter '{section}.{key}' is defined twice with "
+                        f"different values: {origin[(section, key)]} gives "
+                        f"{target[key]!r}, {pset.path} gives {value!r}")
                 target[key] = value
                 origin[(section, key)] = pset.path
     return merged
 
 
 def section_order(sections: Mapping[str, Any]) -> List[str]:
-    """排定段的先后：``&input`` 必须先被 ``ld1.x`` 读到，其余按固定顺序。"""
+    """Order the sections: ``&input`` must be read by ``ld1.x`` first, the rest in a fixed order."""
     preferred = ("input", "inputp", "test")
     known = [name for name in preferred if name in sections]
     rest = [name for name in sections if name not in preferred]

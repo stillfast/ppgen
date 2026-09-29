@@ -1,12 +1,12 @@
-"""``rc_scan`` 工作流的测试：扫描点、多份输入的渲染、批量跑。
+"""Tests for the ``rc_scan`` workflow: scan points, rendering of many inputs, batch runs.
 
-分四层：
+Four layers:
 
-* **扫描算术** —— ``rc_default`` + ``rc_range`` -> 扫描点、目录名、rcut 打进卡片；
-* **渲染** —— ``iswitch=3`` 的输入（``&input`` / ``&inputp`` / 卡片 / ``&test``），
-  含各种会被 ``ld1.x`` 拒绝的写法；
-* **prepare/run** —— 多份输出的落盘位置与批量执行（用假 ``ld1.x``）；
-* **真 QE** —— 标 ``slow`` 的那条真跑一个扫描点，确认能产出 ``UPF``。
+* **scan arithmetic** -- ``rc_default`` + ``rc_range`` -> scan points, dir names, rcut in cards;
+* **rendering** -- inputs with ``iswitch=3`` (``&input`` / ``&inputp`` / cards / ``&test``),
+  including the various forms that ``ld1.x`` rejects;
+* **prepare/run** -- where many outputs land and how they are batched (with a fake ``ld1.x``);
+* **real QE** -- the one marked ``slow`` really runs a scan point and checks it produces a ``UPF``.
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ exit "${FAKE_LD1_EXIT:-0}"
 
 @pytest.fixture()
 def scan_dir(tmp_path: Path) -> Path:
-    """一个自足的 rc_scan run 目录：input.json + 两个参数 YAML。"""
+    """A self-contained rc_scan run directory: input.json plus two parameter YAML files."""
     params = tmp_path / "parameters"
     (params / "input").mkdir(parents=True)
     (params / "input" / "rc_scan.yml").write_text(RC_SCAN_YML, encoding="utf-8")
@@ -90,7 +90,7 @@ def local_scan_parameters(scan_dir: Path, monkeypatch):
 
 @pytest.fixture()
 def fake_ld1(scan_dir: Path, local_scan_parameters) -> Path:
-    """装一个假的 ld1.x，并把 input.json 里的 qe_path 指过去。"""
+    """Install a fake ld1.x and point qe_path in input.json at it."""
     bin_dir = scan_dir / "fakebin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / "ld1.x"
@@ -104,10 +104,10 @@ def fake_ld1(scan_dir: Path, local_scan_parameters) -> Path:
 
 
 # --------------------------------------------------------------------------
-# 扫描算术
+# scan arithmetic
 # --------------------------------------------------------------------------
 def test_centers_take_the_first_card_of_a_duplicated_label():
-    """多投影子（同标签多张卡片）时，扫描中心取**第一张**（与 update 写回一致）。"""
+    """The scan center of a duplicated label is the **first** card, as update writes back."""
     cards = [["6D", 3, 2, 1.0, 0.0, 2.4, 2.4, 0.0],
              ["5F", 4, 3, 3.0, 0.0, 1.3, 1.3, 0.0],
              ["6D", 3, 2, 0.0, -0.05, 2.0, 2.0, 0.0],
@@ -116,12 +116,13 @@ def test_centers_take_the_first_card_of_a_duplicated_label():
 
     centers = scan.centers_from_cards(cards, warnings=warnings)
 
-    assert centers == {"6D": 2.4, "5F": 1.3}          # 第一张说了算
-    assert any("多投影子" in text and "5F" in text for text in warnings)
+    assert centers == {"6D": 2.4, "5F": 1.3}          # the first card wins
+    assert any("multiple projection operators" in text and "5F" in text
+               for text in warnings)
 
 
 def test_apply_moves_every_card_of_that_label():
-    """扫 5F 时同标签的卡片（第二投影子）一起改 rcut/rcutus，ener 不动。"""
+    """When 5F is scanned, every card of that label changes rcut/rcutus; ener stays untouched."""
     sections = {"orbitals": [["5F", 4, 3, 3.0, 0.0, 1.3, 1.3, 0.0],
                              ["6D", 3, 2, 0.0, -0.05, 2.0, 2.0, 0.0],
                              ["5F", 4, 3, 0.0, -0.6, 1.2, 1.2, 0.0]]}
@@ -130,8 +131,8 @@ def test_apply_moves_every_card_of_that_label():
 
     cards = apply.apply(sections, point)["orbitals"]
 
-    assert [card[5] for card in cards] == [1.5, 2.0, 1.5]      # 两张 5F 都动
-    assert cards[1][4] == -0.05 and cards[2][4] == -0.6        # ener 没碰
+    assert [card[5] for card in cards] == [1.5, 2.0, 1.5]      # both 5F cards move
+    assert cards[1][4] == -0.05 and cards[2][4] == -0.6        # ener is not touched
 
 
 def test_offsets_include_both_ends():
@@ -150,9 +151,9 @@ def test_offsets_append_the_stop_when_not_divisible():
 
 
 @pytest.mark.parametrize("spec,message", [
-    ([0.0, 1.0], "三个数"),
-    ([-1.0, 1.0, 0.0], "步长必须为正"),
-    ([1.0, 0.0, 0.1], "小于起点"),
+    ([0.0, 1.0], r"rc_range must be three numbers \[start, stop, step\]"),
+    ([-1.0, 1.0, 0.0], "rc_range step must be positive"),
+    ([1.0, 0.0, 0.1], "rc_range stop 0 is below start 1"),
 ])
 def test_offsets_reject_bad_specs(spec, message):
     with pytest.raises(ParameterError, match=message):
@@ -160,8 +161,8 @@ def test_offsets_reject_bad_specs(spec, message):
 
 
 @pytest.mark.parametrize("value,expected", [
-    (1.0, "rc_1p0"),            # 整数中心也要带一位小数
-    (1.0641, "rc_1p0641"),      # 四位小数照写，名字=真实 rcut
+    (1.0, "rc_1p0"),            # an integer center still carries one decimal
+    (1.0641, "rc_1p0641"),      # four decimals are kept as they are; the name is the real rcut
     (0.5641, "rc_0p5641"),
     (2.4066, "rc_2p4066"),
     (1.05, "rc_1p05"),
@@ -171,21 +172,21 @@ def test_rc_label_is_the_exact_value(value, expected):
 
 
 def test_centers_come_from_the_cards():
-    """扫描中心就是 orbitals 卡片里的 rcut（不四舍五入）。"""
+    """The scan center is the rcut from the orbitals card, without rounding."""
     centers = scan.centers_from_cards([
         ["6S", 1, 0, 2.0, 0.0, 1.3527, 1.3527, 0.0],
         ["5F", 4, 3, 3.0, 0.0, 1.0641, 1.0641, 0.0],
     ])
     assert centers == {"6S": 1.3527, "5F": 1.0641}
-    # 映射形式的卡片也认
+    # mapping-style cards are accepted too
     assert scan.centers_from_cards([{"label": "5F", "rcut": 1.0641}]) == {"5F": 1.0641}
 
 
 @pytest.mark.parametrize("cards,message", [
-    ([], "没有 orbitals 卡片"),
-    ([["5F", 4, 3, 3.0, 0.0]], "读不出 rcut"),
-    ([[5, 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]], "标签不对"),
-    ([["5F", 4, 3, 3.0, 0.0, None, 1.0, 0.0]], "rcut 不是数"),
+    ([], "no orbitals cards in the parameters"),
+    ([["5F", 4, 3, 3.0, 0.0]], "cannot read rcut from card"),
+    ([[5, 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]], "has a bad label"),
+    ([["5F", 4, 3, 3.0, 0.0, None, 1.0, 0.0]], "has a non-numeric rcut"),
 ])
 def test_centers_reject_bad_cards(cards, message):
     with pytest.raises(ParameterError, match=message):
@@ -193,7 +194,7 @@ def test_centers_reject_bad_cards(cards, message):
 
 
 def test_points_around_the_card_rcut():
-    """5F 中心 1.0641 ± 0.5（步长 0.1）→ 11 个点，中心点就是卡片那个值。"""
+    """5F center 1.0641 ± 0.5 in steps of 0.1 gives 11 points; the center point is the card value."""
     centers = {"6S": 1.3527, "7S": 1.1807, "6P": 1.6133, "6D": 2.4066,
                "5F": 1.0641}
 
@@ -212,12 +213,13 @@ def test_points_around_the_card_rcut():
 
 
 def test_points_reject_negative_rcut():
-    with pytest.raises(ParameterError, match="不是正数"):
+    with pytest.raises(ParameterError, match="is not positive"):
         scan.points({"5F": 0.2}, [-0.5, 0.5, 0.1])
 
 
 def test_points_reject_empty_centers():
-    with pytest.raises(ParameterError, match="扫描中心"):
+    with pytest.raises(ParameterError,
+                       match=r"scan centers \(orbital -> rcut\) must not be empty"):
         scan.points({}, [0.0, 0.0, 0.1])
 
 
@@ -232,9 +234,9 @@ def test_points_filter_by_orbital_and_value():
 
 
 def test_points_reject_unknown_filters():
-    with pytest.raises(ParameterError, match="不在 orbitals 卡片里"):
+    with pytest.raises(ParameterError, match="are not in the orbitals cards"):
         scan.points({"5F": 1.0}, [0.0, 0.0, 0.1], only=["9Z"])
-    with pytest.raises(ParameterError, match="一个扫描点都不剩"):
+    with pytest.raises(ParameterError, match="no scan point left after filtering"):
         scan.points({"5F": 1.0}, [-0.5, 0.5, 0.1], rc=[9.9])
 
 
@@ -247,28 +249,28 @@ def test_apply_changes_only_the_scanned_orbital():
     updated = apply.apply(sections, point)
 
     assert updated["orbitals"][0][5] == 1.0            # rcut
-    assert updated["orbitals"][0][6] == 1.0            # rcutus 一起改
-    assert updated["orbitals"][1][5] == 1.3527         # 别的轨道不动
-    assert sections["orbitals"][0][5] == 1.0641        # 不就地改原参数
+    assert updated["orbitals"][0][6] == 1.0            # rcutus moves along
+    assert updated["orbitals"][1][5] == 1.3527         # other orbitals stay put
+    assert sections["orbitals"][0][5] == 1.0641        # original parameters are left unchanged
 
 
 def test_apply_rejects_unknown_orbital():
     point = scan.ScanPoint(orbital="9Z", rcut=1.0, offset=0.0,
                            relative_dir=Path("x"))
-    with pytest.raises(ParameterError, match="不在 orbitals 卡片里"):
+    with pytest.raises(ParameterError, match="to scan is not among the orbitals cards"):
         apply.apply({"orbitals": [["5F", 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]]}, point)
 
 
 def test_describe_and_summary_rows():
     points = scan.points({"5F": 1.0, "6S": 1.3}, [-0.1, 0.1, 0.1])
-    assert scan.describe(points) == "2 个轨道 × 3 个点 = 6 个扫描点"
+    assert scan.describe(points) == "2 orbitals × 3 points = 6 scan points"
     rows = scan.summary_rows(points)
     assert [row[0] for row in rows] == ["5F", "6S"]
-    assert rows[0][1] == "0.9、1、1.1"
+    assert rows[0][1] == "0.9, 1, 1.1"
 
 
 # --------------------------------------------------------------------------
-# 渲染 iswitch=3 的输入
+# rendering inputs with iswitch=3
 # --------------------------------------------------------------------------
 def _sections(tmp_path: Path) -> dict:
     from pp_gen.inputs import parameter_files as parameters
@@ -287,13 +289,13 @@ def test_render_generation_input_layout(tmp_path):
 
     assert "!" not in text and "#" not in text
     lines = text.splitlines()
-    # 段序：&input -> &inputp -> 个数 + 卡片 -> &test
+    # section order: &input -> &inputp -> count + cards -> &test
     assert lines[0] == "&input"
     assert "&inputp" in lines and "&test" in lines
     assert lines.index("&inputp") < lines.index("5") < lines.index("&test")
     assert lines[lines.index("&inputp") - 1] == "/"
     assert lines[lines.index("5") - 1] == "/"
-    assert lines[lines.index("&test") - 1].startswith("5F")   # 最后一张卡片
+    assert lines[lines.index("&test") - 1].startswith("5F")   # the last card
     assert lines[-1] == "/"
 
 
@@ -323,15 +325,15 @@ def test_render_cards_accepts_mappings():
 
 
 @pytest.mark.parametrize("cards,message", [
-    ([["5F", 4, 3, 3.0, 0.0, 1.0]], "7 列"),
-    ([["5F", 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0, 1]], "7 列"),
-    ([[5, 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]], "标签必须是字符串"),
-    ([["5F", 4, 3, 3.0, 0.0, "1.0", 1.0, 0.0]], "必须是数"),
+    ([["5F", 4, 3, 3.0, 0.0, 1.0]], "7 columns"),
+    ([["5F", 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0, 1]], "7 columns"),
+    ([[5, 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]], "must be a string"),
+    ([["5F", 4, 3, 3.0, 0.0, "1.0", 1.0, 0.0]], "must be a number"),
     ([["5F", 4, 3, 3.0, 0.0, 1.5, 1.0, 0.0]], "rcut=1.5 > rcutus=1"),
-    ([["5F", 4, 2, 3.0, 0.0, 1.0, 1.0, 0.0]], "与 l=2 不一致"),
+    ([["5F", 4, 2, 3.0, 0.0, 1.0, 1.0, 0.0]], "disagrees with l=2"),
     ([["5F", 2, 3, 3.0, 0.0, 1.0, 1.0, 0.0]], "n=2 < l+1=4"),
-    ([["5F", 4, 3, 15.0, 0.0, 1.0, 1.0, 0.0]], "超过 2(2l+1)=14"),
-    ([["5F", 4, 3, 3.0, None, 1.0, 1.0, 0.0]], "是空的"),
+    ([["5F", 4, 3, 15.0, 0.0, 1.0, 1.0, 0.0]], "exceeds 2(2l+1)=14"),
+    ([["5F", 4, 3, 3.0, None, 1.0, 1.0, 0.0]], "is empty"),
 ])
 def test_render_cards_rejects_bad_cards(cards, message):
     with pytest.raises(RenderError, match=re.escape(message)):
@@ -341,32 +343,32 @@ def test_render_cards_rejects_bad_cards(cards, message):
 def test_n_orbitals_must_match_card_count(tmp_path):
     sections = _sections(tmp_path)
     sections["n_orbitals"] = 4
-    with pytest.raises(RenderError, match="不一致"):
+    with pytest.raises(RenderError, match="does not match the number of orbitals entries"):
         render_sections(sections, section_order(sections))
 
 
 def test_n_orbitals_without_cards_is_an_error():
-    with pytest.raises(RenderError, match="却没写 orbitals"):
+    with pytest.raises(RenderError, match="is given without orbitals"):
         cards_of({"n_orbitals": 5})
 
 
 def test_iswitch_three_needs_inputp_and_cards():
     base = {"input": {"iswitch": 3}, "orbitals": [["5F", 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]]}
-    with pytest.raises(RenderError, match="必须有 &inputp 段"):
+    with pytest.raises(RenderError, match="requires an &inputp section"):
         render_sections(base)
-    with pytest.raises(RenderError, match="必须有通道卡片"):
+    with pytest.raises(RenderError, match="requires the channel cards"):
         render_sections({"input": {"iswitch": 3}, "inputp": {"rcloc": 2.0}})
 
 
 def test_cards_with_iswitch_one_is_an_error():
     base = {"input": {"iswitch": 1}, "inputp": {"rcloc": 2.0},
             "orbitals": [["5F", 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]]}
-    with pytest.raises(RenderError, match="只在 iswitch=3"):
+    with pytest.raises(RenderError, match="the cards belong to iswitch=3"):
         render_sections(base)
 
 
 # --------------------------------------------------------------------------
-# prepare：一份输入 -> 一批输入
+# prepare: one input -> a batch of inputs
 # --------------------------------------------------------------------------
 def test_prepare_writes_one_input_per_scan_point(scan_dir, local_scan_parameters):
     result = prepare(scan_dir / "input.json")
@@ -375,10 +377,10 @@ def test_prepare_writes_one_input_per_scan_point(scan_dir, local_scan_parameters
     assert result.output_count == 55
     assert result.runs_dir == scan_dir / "runs"
     paths = {str(item.path.relative_to(scan_dir)) for item in result.targets}
-    assert "runs/5F/rc_1p0641/U.in" in paths          # 中心 = 卡片里的 rcut
+    assert "runs/5F/rc_1p0641/U.in" in paths          # the center equals the rcut from the card
     assert "runs/6D/rc_2p9066/U.in" in paths
     assert all(item.path.is_file() for item in result.targets)
-    # 每个点的目录各不相同（否则同名的 UPF 会互相覆盖）
+    # every point gets its own directory (otherwise same-named UPFs overwrite each other)
     assert len(paths) == 55
 
 
@@ -390,7 +392,7 @@ def test_prepare_scan_point_content(scan_dir, local_scan_parameters):
     assert target.label == "5F rc=1.0641"
     assert target.rcut == pytest.approx(1.0641)
     assert "5F  4  3  3.0  0.0  1.0641  1.0641  0.0" in target.text
-    # 其余轨道保持参数文件里的精确值
+    # the remaining orbitals keep the exact values from the parameter file
     assert "6S  1  0  2.0  0.0  1.3527  1.3527  0.0" in target.text
     assert "5F  4  3  3.0  0.0  1.0  1.0  0.0" not in target.text
 
@@ -400,7 +402,7 @@ def test_prepare_scan_is_idempotent(scan_dir, local_scan_parameters):
     again = prepare(scan_dir / "input.json", only=["5F"])
 
     assert again.written_count == 11
-    assert again.changed_count == 0                    # 内容没变，不算覆盖
+    assert again.changed_count == 0                    # the content is unchanged, so not an overwrite
 
 
 def test_prepare_scan_dry_run_writes_nothing(scan_dir, local_scan_parameters):
@@ -421,18 +423,18 @@ def test_prepare_scan_outdir(scan_dir, local_scan_parameters, tmp_path):
 
 
 def test_prepare_scan_honours_only_and_rc_filters(scan_dir, local_scan_parameters):
-    # 两个轨道的扫描序列小数位不同（5F 是 0.5641+0.1k，6S 是 0.8527+0.1k），
-    # 所以各挑一个各自序列里真实存在的 rcut
+    # the two orbitals have scan sequences on a different decimal grid (5F is 0.5641+0.1k,
+    # 6S is 0.8527+0.1k), so pick an rcut that really exists in each sequence
     result = prepare(scan_dir / "input.json", only=["5F", "6S"],
                      rc=[1.0641, 1.1527])
 
     assert {(item.orbital, round(item.rcut, 4)) for item in result.targets} == {
         ("5F", 1.0641), ("6S", 1.1527)}
-    assert any("过滤" in w for w in result.warnings)
+    assert any("filtering left" in w for w in result.warnings)
 
 
 def test_ae_radial_rejects_scan_filters(run_dir, local_parameters):
-    with pytest.raises(InputError, match="不扫描"):
+    with pytest.raises(InputError, match="does not scan, so --only / --rc do not apply"):
         prepare(run_dir / "input.json", only=["5F"])
 
 
@@ -440,12 +442,12 @@ def test_scan_workflow_requires_both_parameter_groups(scan_dir, local_scan_param
     (scan_dir / "input.json").write_text(json.dumps({
         "workflow": "rc_scan", "parameters": {"input": "rc_scan"},
         "qe_path": "xx"}), encoding="utf-8")
-    with pytest.raises(InputError, match="缺少"):
+    with pytest.raises(InputError, match="the parameters of input.json are missing"):
         prepare(scan_dir / "input.json")
 
 
 # --------------------------------------------------------------------------
-# run：批量执行
+# run: batch execution
 # --------------------------------------------------------------------------
 def test_run_runs_every_scan_point(fake_ld1, scan_dir, local_scan_parameters):
     batch = run(scan_dir / "input.json", only=["5F"])
@@ -456,7 +458,7 @@ def test_run_runs_every_scan_point(fake_ld1, scan_dir, local_scan_parameters):
     for item in batch.runs:
         assert item.ok
         assert item.rcut is not None
-        # cwd 是各自那个点的目录：假 ld1.x 把 fake.dat 写在 cwd
+        # cwd is that point's own directory: the fake ld1.x writes fake.dat into cwd
         assert (item.run_dir / "fake.dat").is_file()
         assert (item.run_dir / "U.out").is_file()
     assert batch.runs[0].run_dir == scan_dir / "runs" / "5F" / "rc_0p5641"
@@ -465,7 +467,7 @@ def test_run_runs_every_scan_point(fake_ld1, scan_dir, local_scan_parameters):
 
 def test_run_batch_keeps_going_after_a_failure(fake_ld1, scan_dir,
                                                local_scan_parameters, monkeypatch):
-    """中途失败不中断：点要跑完，失败的在汇总里点出来，退出码非 0。"""
+    """A failure does not stop the batch: all points run and the exit code is non-zero."""
     (scan_dir / "fakebin" / "ld1.x").write_text(
         "#!/usr/bin/env bash\n"
         "cat > /dev/null\n"
@@ -475,10 +477,10 @@ def test_run_batch_keeps_going_after_a_failure(fake_ld1, scan_dir,
 
     batch = run(scan_dir / "input.json", only=["5F"])
 
-    assert len(batch.runs) == 11                        # 11 个点都跑到了
+    assert len(batch.runs) == 11                        # all 11 points were run
     assert [round(item.rcut, 4) for item in batch.failed] == [0.7641]
-    assert batch.runs[-1].ok                            # 失败之后还继续
-    assert batch.returncode == 1                        # 批量：有失败就是 1
+    assert batch.runs[-1].ok                            # it keeps going after the failure
+    assert batch.returncode == 1                        # batch mode: any failure gives 1
     assert not batch.ok
 
 
@@ -492,12 +494,12 @@ def test_run_batch_single_target_passes_through_exit_code(fake_ld1, scan_dir,
                 only=["5F"], rc=[1.0641])
 
     assert len(batch.runs) == 1
-    assert batch.returncode == 3                        # 单目标：原样透传
+    assert batch.returncode == 3                        # single target: the exit code passes through
 
 
 def test_run_batch_does_not_echo_every_stderr(fake_ld1, scan_dir,
                                               local_scan_parameters, capsys):
-    """55 个点各回显一段 stderr 会抄屏；批量时只写 U.err，不回显。"""
+    """Echoing stderr for all 55 points would flood the terminal; a batch only writes U.err."""
     (scan_dir / "fakebin" / "ld1.x").write_text(
         "#!/usr/bin/env bash\ncat > /dev/null\necho noisy >&2\n",
         encoding="utf-8")
@@ -508,10 +510,10 @@ def test_run_batch_does_not_echo_every_stderr(fake_ld1, scan_dir,
 
     assert len(batch.runs) == 2
     captured = capsys.readouterr()
-    assert "noisy" not in captured.err                     # 终端干净
+    assert "noisy" not in captured.err                     # the terminal stays clean
     for item in batch.runs:
-        assert "noisy" in item.err_file.read_text(encoding="utf-8")   # 但留了底
-    assert any("不逐条回显" in w for w in batch.warnings)
+        assert "noisy" in item.err_file.read_text(encoding="utf-8")   # but it is still on disk
+    assert any("is not echoed" in w for w in batch.warnings)
 
 
 def test_run_single_still_echoes_stderr(fake_ld1, scan_dir, local_scan_parameters,
@@ -524,7 +526,7 @@ def test_run_single_still_echoes_stderr(fake_ld1, scan_dir, local_scan_parameter
     run_one(scan_dir / "input.json", only=["5F"],
             rc=[1.0641])
 
-    assert "noisy" in capsys.readouterr().err              # 单点照旧回显
+    assert "noisy" in capsys.readouterr().err              # a single point still echoes it
 
 
 def test_run_batch_dry_run(fake_ld1, scan_dir, local_scan_parameters):
@@ -532,33 +534,33 @@ def test_run_batch_dry_run(fake_ld1, scan_dir, local_scan_parameters):
 
     assert len(batch.runs) == 11
     assert all(not item.executed for item in batch.runs)
-    assert not (scan_dir / "runs").exists()             # 连输入都没生成
+    assert not (scan_dir / "runs").exists()             # not even the inputs were generated
 
 
 def test_run_batch_generates_every_point_input(fake_ld1, scan_dir,
                                               local_scan_parameters):
-    """``-i`` 会先把每个点的 U.in 都生成出来，再逐个跑。"""
+    """``-i`` generates the U.in of every point first, then runs them one by one."""
     batch = run(scan_dir / "input.json", only=["5F"])
 
-    assert batch.prepared_count == 11                 # 11 个偏移点各一份
+    assert batch.prepared_count == 11                 # one input per offset point, 11 in total
     assert all(item.in_file.is_file() for item in batch.runs)
     assert len(batch.succeeded) == 11
 
 
 def test_dry_run_batch_writes_no_input_but_warns(fake_ld1, scan_dir,
                                                  local_scan_parameters):
-    """干跑不生成文件，于是"缺输入"这件事只能在这个模式下看到。"""
+    """A dry run writes no files, so the "missing input" case is only visible in this mode."""
     batch = run(scan_dir / "input.json", only=["5F"], dry_run=True)
 
     assert not (scan_dir / "runs").exists()
     assert not batch.prepared
     assert all(not item.executed for item in batch.runs)
-    assert any("还不存在" in w and "真实运行会先把它生成出来" in w
+    assert any("does not exist yet" in w and "a real run would generate it first" in w
                for w in batch.warnings)
 
 
 def test_run_scan_records_every_point(fake_ld1, scan_dir, local_scan_parameters):
-    """批量跑完，output.json 里每个扫描点一条：退出码 / 原因 / 目录。"""
+    """After a batch, output.json holds one record per point: exit code / reason / directory."""
     batch = run(scan_dir / "input.json",
                 only=["5F"], rc=[1.0641, 1.1641])
 
@@ -572,11 +574,12 @@ def test_run_scan_records_every_point(fake_ld1, scan_dir, local_scan_parameters)
     assert [task["rcut"] for task in payload["tasks"]] == \
         pytest.approx([1.0641, 1.1641])
     assert all(task["exit_code"] == 0 for task in payload["tasks"])
-    assert all(task["exit_reason"] == "正常结束" for task in payload["tasks"])
+    assert all(task["exit_reason"] == "finished normally" for task in payload["tasks"])
 
 
 def test_run_scan_records_a_failed_point(fake_ld1, scan_dir, local_scan_parameters):
-    """一个点失败不影响记录完整性：它那条记退出码与原因，其余照跑。"""
+    """A failing point does not spoil the record: that entry carries its exit code and
+    reason, and the rest keep running."""
     (scan_dir / "fakebin" / "ld1.x").write_text(
         "#!/usr/bin/env bash\ncat > /dev/null\n"
         "if [[ \"$PWD\" == *rc_1p1641* ]]; then\n"
@@ -601,7 +604,7 @@ def test_run_scan_records_a_failed_point(fake_ld1, scan_dir, local_scan_paramete
 
 def test_run_scan_records_a_timeout_and_keeps_going(fake_ld1, scan_dir,
                                                     local_scan_parameters):
-    """卡住的那个点记成超时，后面的点继续跑完。"""
+    """The stuck point is recorded as a timeout; the later points still run to the end."""
     (scan_dir / "fakebin" / "ld1.x").write_text(
         "#!/usr/bin/env bash\ncat > /dev/null\n"
         "if [[ \"$PWD\" == *rc_1p0641* ]]; then sleep 30; fi\n",
@@ -614,8 +617,8 @@ def test_run_scan_records_a_timeout_and_keeps_going(fake_ld1, scan_dir,
     payload = json.loads(batch.output_file.read_text(encoding="utf-8"))
     tasks = {round(task["rcut"], 4): task for task in payload["tasks"]}
     assert tasks[1.0641]["exit_code"] is None
-    assert "已被终止" in tasks[1.0641]["exit_reason"]
-    assert tasks[1.1641]["exit_code"] == 0             # 没被超时打断
+    assert "terminated" in tasks[1.0641]["exit_reason"]
+    assert tasks[1.1641]["exit_code"] == 0             # not cut short by the timeout
     assert batch.returncode == 1
 
 
@@ -628,9 +631,9 @@ def test_cli_prepare_scan(fake_ld1, scan_dir, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "5 个轨道" not in out                        # 过滤后只剩 1 个轨道
-    assert "1 个轨道 × 11 个点 = 11 个扫描点" in out
-    assert "已生成     : 11 个 U.in" in out
+    assert "5 orbitals" not in out                      # only 1 orbital is left after filtering
+    assert "1 orbitals × 11 points = 11 scan points" in out
+    assert "generated  : 11 U.in" in out
     assert "runs/5F/rc_*/" in out
 
 
@@ -640,8 +643,8 @@ def test_cli_run_scan_batch(fake_ld1, scan_dir, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "扫描点     : 5F rc=1.0641" in out      # 单点走详细报告，但要标出是哪个点
-    assert "已按参数重新生成" in out
+    assert "scan point : 5F rc=1.0641" in out      # a single point: detailed report, names itself
+    assert "rendered again from the parameters" in out
 
 
 def test_cli_run_scan_summary(fake_ld1, scan_dir, capsys):
@@ -649,32 +652,33 @@ def test_cli_run_scan_summary(fake_ld1, scan_dir, capsys):
               "--only", "5F", "--rc", "1.0641,1.1641"])
 
     out = capsys.readouterr().out
-    assert "汇总       : 成功 2/2" in out
+    assert "summary    : succeeded 2/2" in out
     assert "[  1/2] 5F rc=1.0641" in out
-    assert "已按参数重新生成 2 份 U.in" in out
+    assert "rendered 2 U.in files from the parameters" in out
 
 
 def test_cli_rejects_a_non_numeric_rc(fake_ld1, scan_dir, capsys):
     assert cli.main(["run", "-i", str(scan_dir / "input.json"),
                      "--rc", "abc"]) == 2
-    assert "不是数" in capsys.readouterr().err
+    assert "--rc: 'abc' is not a number" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------
-# 真 QE（slow）：一个扫描点能不能真出 UPF
+# real QE (slow): can one scan point really produce a UPF
 # --------------------------------------------------------------------------
 @pytest.mark.slow
 def test_real_ld1x_produces_a_upf_for_one_scan_point(tmp_path, monkeypatch):
     ld1 = Path(config.qe_binary(config.DEFAULT_QE_PATH))
     if not (ld1.is_file() and ld1.stat().st_mode & 0o111):
-        pytest.skip(f"本机没有 ld1.x：{ld1}")
+        pytest.skip(f"no ld1.x on this machine: {ld1}")
     monkeypatch.delenv(config.ENV_PARAMETERS, raising=False)
 
     write_input(tmp_path, parameters_map={"input": "rc_scan",
                                           "rc_scan_range": "rc_scan_range"},
                 qe_path=config.DEFAULT_QE_PATH, workflow="rc_scan")
 
-    # 中心值以**真实的参数文件**为准（那是会变的），别把数字写死在测试里
+    # the center comes from the **real parameter file** (it does change), so do not
+    # hard-code the number in the test
     from pp_gen.inputs import parameter_files as parameters_mod
     from pp_gen.scans.axis import rc_label
     from pp_gen.scans.points import centers_from_cards
@@ -695,4 +699,4 @@ def test_real_ld1x_produces_a_upf_for_one_scan_point(tmp_path, monkeypatch):
     card = [line.split() for line in result.in_file.read_text(encoding="utf-8")
             .splitlines() if line.startswith("5F ")][0]
     assert float(card[5]) == pytest.approx(center)     # rcut
-    assert float(card[6]) == pytest.approx(center)     # rcutus 跟着改
+    assert float(card[6]) == pytest.approx(center)     # rcutus moves along

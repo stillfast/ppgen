@@ -1,8 +1,8 @@
-"""``ppgen prepare`` 的测试。
+"""Tests for ``ppgen prepare``.
 
-不依赖真实 QE：只管"参数 YAML + input.json -> 文本"这一步的正确性。
-（另有集成验证：本机 ``ld1.x < U.in`` 复现出了与参考 run 逐字节一致的
-``ld1.wfc`` / ``vx.pot``，见 README。）
+No real QE is involved: only the "parameter YAML + input.json -> text" step is checked.
+(There is also an integration check: running ``ld1.x < U.in`` on this machine reproduced an
+``ld1.wfc`` / ``vx.pot`` byte-identical to the reference run, see README.)
 """
 from __future__ import annotations
 
@@ -23,10 +23,10 @@ PARAMETERS = REPO / "src" / "pp_gen" / "parameters"
 
 
 # --------------------------------------------------------------------------
-# 工具：把渲染出来的文本读回来，验证"写出去的和参数里说的是同一件事"
+# Helpers: read the rendered text back and verify "what is written matches the parameters"
 # --------------------------------------------------------------------------
 def _strip_comments(text: str) -> str:
-    """去掉 ``!`` 注释（引号内的不算）—— 用来读带注释的历史参考文件。"""
+    """Strip ``!`` comments (not the ones inside quotes), to read the commented reference file."""
     out = []
     for line in text.splitlines():
         chars, quote = [], False
@@ -43,7 +43,7 @@ def _strip_comments(text: str) -> str:
 
 
 def _split_entries(body: str):
-    """按顶层逗号切分 namelist 正文（引号内的逗号不算分隔符）。"""
+    """Split a namelist body on top-level commas (a comma inside quotes is not a separator)."""
     out, buf, quote, i = [], [], False, 0
     while i < len(body):
         ch = body[i]
@@ -65,10 +65,10 @@ def _split_entries(body: str):
 
 
 def _parse(text: str, *, strict: bool = True):
-    """极简 namelist 读回：{段名: {变量: Python 值}}。
+    """Minimal namelist reader: {section name: {variable: Python value}}.
 
-    ``strict=True``（默认）用来断言"生成的文件里一个注释都没有"；读
-    历史参考文件时用 ``strict=False``。
+    ``strict=True`` (the default) asserts that "the generated file has not a single comment";
+    reading the comment-carrying reference file uses ``strict=False``.
     """
     if not strict:
         text = _strip_comments(text)
@@ -76,7 +76,7 @@ def _parse(text: str, *, strict: bool = True):
     for line in text.splitlines():
         stripped = line.strip()
         if strict and stripped.startswith("!"):
-            raise AssertionError(f"生成的文件里不允许有注释：{line!r}")
+            raise AssertionError(f"the rendered file must not carry a comment: {line!r}")
         if stripped.startswith("&"):
             current, buf = stripped[1:].strip(), []
             blocks[current] = {}
@@ -109,14 +109,15 @@ def _literal(raw: str):
 
 
 # --------------------------------------------------------------------------
-# 渲染
+# Rendering
 # --------------------------------------------------------------------------
 def test_render_has_no_comments_and_keeps_every_field(local_parameters):
-    """用夹具里那份**内容固定**的 yml 精确断言渲染结果。
+    """Assert the rendered result exactly against the **fixed-content** yml of the fixture.
 
-    刻意不用仓库里真实的 ``parameters/input/ae_radial.yml`` —— 那是随时会
-    被编辑的参数文件，把它写进断言等于让每个测试都变成"用户改 yml 就红"。
-    真实 yml 由下面的 test_repo_ae_radial_yml_* 用不变式去管。
+    The real ``parameters/input/ae_radial.yml`` of the repository is deliberately not
+    used: it is a parameter file that may be edited at any moment, so writing it into
+    an assertion would make every test turn red as soon as the user edits the yml.
+    The real yml is governed by invariants in test_repo_ae_radial_yml_* below.
     """
     sections = parameters.merge([
         parameters.load_set("input", "ae_radial", local_parameters)])
@@ -139,17 +140,19 @@ def test_render_has_no_comments_and_keeps_every_field(local_parameters):
 
 
 def test_repo_ae_radial_yml_renders_and_covers_the_reference():
-    """仓库里真实的 ``ae_radial.yml``：能渲染、没注释、且覆盖参考文件的所有变量。
+    """The real ``ae_radial.yml`` of the repository: it renders, has no comments, and
+    covers every variable of the reference file.
 
-    只断言一个方向：**参考文件里有的，我们都有且取值相同**（``title`` 除外，
-    它是自由文本）。反过来不成立是允许的 —— yml 可以显式写出参考文件留给
-    ``ld1.x`` 自动决定的网格参数（现在的 ``xmin`` / ``dx`` / ``rmax`` 就是
-    这么来的），所以这里不比对"多出来的键"。
+    Only one direction is asserted: **whatever the reference file contains, we also have
+    with the same value** (except ``title``, which is free text). The converse is allowed
+    to fail: the yml may explicitly write out grid parameters that the reference file
+    leaves to ``ld1.x`` (the current ``xmin`` / ``dx`` / ``rmax``), so extra keys are not
+    compared here.
     """
     reference = (REPO.parent / "ppgen" / "script" / "runs" / "ae_radial"
                  / "U.ae.iswitch1.in")
-    if not reference.is_file():                       # 历史产物可能不在
-        pytest.skip(f"参考文件不在：{reference}")
+    if not reference.is_file():                       # the reference may be absent
+        pytest.skip(f"reference file is not there: {reference}")
 
     sections = parameters.merge([
         parameters.load_set("input", "ae_radial", PARAMETERS)])
@@ -161,26 +164,31 @@ def test_repo_ae_radial_yml_renders_and_covers_the_reference():
     for key, value in theirs.items():
         if key == "title":
             continue
-        assert key in ours, f"参考文件里的 {key} 没有被渲染出来"
-        assert ours[key] == value, f"{key}: 渲染成 {ours[key]!r}，参考是 {value!r}"
+        assert key in ours, f"{key} of the reference file was not rendered"
+        assert ours[key] == value, f"{key}: rendered as {ours[key]!r}, reference is {value!r}"
 
 
 def test_repo_parameter_files_load_or_are_known_empty():
-    """仓库里每个参数 YAML 要么能读进来，要么是还没写的空占位文件。
+    """Every parameter YAML of the repository either loads, or is an empty
+    placeholder that has not been written yet.
 
-    这条只是防"yml 里打错一个缩进/冒号"这类事在测试阶段没人发现；空文件
-    （``uranium.yml`` / ``rc_scan.yml`` …）明确跳过，它们是占位。
+    This only guards against something like "a typo in the indentation or the
+    colon of a yml" going unnoticed during the test phase; empty files
+    (``uranium.yml`` / ``rc_scan.yml`` ...) are explicitly skipped, they are
+    placeholders.
     """
     for path in sorted(PARAMETERS.rglob("*.yml")):
         text = path.read_text(encoding="utf-8")
         if not text.strip():
-            continue                                   # 空占位文件
+            continue                                   # empty placeholder file
         if path.parent == PARAMETERS:
-            continue          # 顶层 yml 的组名由调用方定（如 rc_scan_range）
-        # 组名 = 参数目录下的**第一级子目录**（就是 namelist 段名，如 'input'），
-        # 再往下的子目录并进名字里（input/type1v14/rc_scan_type1.yml ⇒
-        # group='input'、name='type1v14/rc_scan_type1'）—— 这样同名 YAML 放在
-        # 不同子目录里也不歧义，而且 input.json 里可以原样写这个名字
+            continue          # a top-level yml gets its group name from the caller (e.g. rc_scan_range)
+        # group name = the **first-level subdirectory** under the parameter
+        # directory (that is the namelist section name, e.g. 'input'); deeper
+        # subdirectories are folded into the name (input/type1v14/rc_scan_type1.yml
+        # -> group='input', name='type1v14/rc_scan_type1') -- that way a YAML of
+        # the same name in another subdirectory is unambiguous, and input.json
+        # can carry that name verbatim
         rel = path.parent.relative_to(PARAMETERS)
         group = rel.parts[0]
         name = "/".join(list(rel.parts[1:]) + [path.stem])
@@ -189,12 +197,12 @@ def test_repo_parameter_files_load_or_are_known_empty():
         rendered = ld1_input.render_sections(
             sections, parameters.section_order(sections))
         assert "!" not in rendered
-        assert _parse(rendered)                       # 渲染出来的能读回去
+        assert _parse(rendered)                       # what was rendered reads back
 
 
 def test_output_stem_prefers_atom_then_zed():
     assert ld1_input.output_stem({"input": {"atom": "U", "zed": 92}}) == "U"
-    assert ld1_input.output_stem({"input": {"zed": 92}}) == "U"      # pslibrary 写法
+    assert ld1_input.output_stem({"input": {"zed": 92}}) == "U"      # pslibrary spelling
     with pytest.raises(RenderError):
         ld1_input.output_stem({"input": {"title": "x"}})
     with pytest.raises(RenderError):
@@ -216,9 +224,9 @@ def test_format_value(value, expected):
 
 def test_format_value_rejects_null_and_containers():
     with pytest.raises(RenderError):
-        ld1_input.format_value(None, "&input 的 title")
+        ld1_input.format_value(None, "the title of &input")
     with pytest.raises(RenderError):
-        ld1_input.format_value(["a"], "&input 的 x")
+        ld1_input.format_value(["a"], "the x of &input")
 
 
 def test_render_rejects_bad_names():
@@ -229,7 +237,7 @@ def test_render_rejects_bad_names():
 
 
 # --------------------------------------------------------------------------
-# input.json 的读入与 qe_path
+# Reading input.json and qe_path
 # --------------------------------------------------------------------------
 def test_qe_path_placeholder_is_replaced_and_written_back(run_dir):
     result = prepare(run_dir / "input.json")
@@ -238,7 +246,7 @@ def test_qe_path_placeholder_is_replaced_and_written_back(run_dir):
     assert result.qe_path_filled and result.qe_path_written
     saved = json.loads((run_dir / "input.json").read_text(encoding="utf-8"))
     assert saved["qe_path"] == config.DEFAULT_QE_PATH
-    assert saved["workflow"] == "ld1.x"              # 其它键原样保留
+    assert saved["workflow"] == "ld1.x"              # every other key is kept as it is
     assert saved["parameters"] == {"input": "ae_radial"}
 
 
@@ -278,18 +286,18 @@ def test_load_rejects_broken_inputs(tmp_path):
 
     bad.write_text(json.dumps({"parameters": {"input": "ae_radial"}}), encoding="utf-8")
     with pytest.raises(InputError):
-        run_input.load(bad)                            # 缺 workflow
+        run_input.load(bad)                            # missing workflow
 
     bad.write_text(json.dumps({"workflow": "ld1.x", "parameters": {}}), encoding="utf-8")
     with pytest.raises(InputError):
-        run_input.load(bad)                            # parameters 为空
+        run_input.load(bad)                            # empty parameters
 
     with pytest.raises(InputError):
         run_input.load(tmp_path / "nope.json")
 
 
 # --------------------------------------------------------------------------
-# 端到端：prepare 生成 <元素>.in
+# End to end: prepare renders <element>.in
 # --------------------------------------------------------------------------
 def test_prepare_writes_U_in_next_to_input_json(local_parameters):
     run_dir = local_parameters.parent
@@ -308,8 +316,8 @@ def test_prepare_is_idempotent(local_parameters):
     second = prepare(run_dir / "input.json")
 
     assert first.text == second.text
-    assert not second.overwrote                        # 内容没变
-    assert not second.qe_path_written                  # 第二次不必再写 input.json
+    assert not second.overwrote                        # the content did not change
+    assert not second.qe_path_written                  # the second time input.json need not be written again
 
 
 def test_prepare_reports_overwrite(local_parameters):
@@ -342,12 +350,12 @@ def test_outdir_override(local_parameters, tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 出错路径
+# Error paths
 # --------------------------------------------------------------------------
 def test_unknown_workflow(local_parameters):
     run_dir = local_parameters.parent
     path = write_input(run_dir, workflow="nope")
-    with pytest.raises(InputError, match="没有登记"):
+    with pytest.raises(InputError, match="is not registered"):
         prepare(path)
 
 
@@ -355,12 +363,12 @@ def test_missing_parameter_group(local_parameters):
     run_dir = local_parameters.parent
     path = write_input(run_dir, parameters_map={})
     with pytest.raises(InputError):
-        run_input.load(path)                           # 空的 parameters 先被拦下
+        run_input.load(path)                           # empty parameters are caught first
 
     payload = {"workflow": "ld1.x", "parameters": {"inputp": "ae_radial"},
                "qe_path": "xx"}
     path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(InputError, match="缺少"):
+    with pytest.raises(InputError, match="are missing"):
         prepare(path)
 
 
@@ -370,28 +378,30 @@ def test_extra_parameter_group(local_parameters, run_dir):
                "qe_path": "xx"}
     path = run_dir / "input.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(InputError, match="多出了"):
+    with pytest.raises(InputError, match="extra ones"):
         prepare(path)
 
 
 def test_missing_parameter_yaml(local_parameters, run_dir):
     path = write_input(run_dir, parameters_map={"input": "not_there"})
-    with pytest.raises(ParameterError, match="找不到"):
+    with pytest.raises(ParameterError, match="no YAML"):
         prepare(path)
 
 
 def test_group_without_matching_section(local_parameters, run_dir):
-    """YAML 里没有与组名同名的段 —— 多半是写错了，要报出来。"""
+    """The YAML has no section of the same name as the group -- most likely a typo,
+    and it has to be reported.
+    """
     (run_dir / "parameters" / "input" / "weird.yml").write_text(
         "inputp:\n  lloc: 3\n", encoding="utf-8")
     path = write_input(run_dir, parameters_map={"input": "weird"})
-    with pytest.raises(ParameterError, match="没有 'input:' 段"):
+    with pytest.raises(ParameterError, match="has no 'input:' section"):
         prepare(path)
 
 
 def test_empty_yaml_is_an_error(local_parameters, run_dir):
     (run_dir / "parameters" / "input" / "ae_radial.yml").write_text("", encoding="utf-8")
-    with pytest.raises(ParameterError, match="空文件"):
+    with pytest.raises(ParameterError, match="is empty"):
         prepare(run_dir / "input.json")
 
 
@@ -404,12 +414,14 @@ def test_conflicting_definitions_are_rejected(tmp_path, monkeypatch):
 
     sets = [parameters.load_set("input", "a", params),
             parameters.load_set("input", "b", params)]
-    with pytest.raises(ParameterError, match="重复定义"):
+    with pytest.raises(ParameterError, match="is defined twice"):
         parameters.merge(sets)
 
 
 def test_workflow_registry_knows_ld1x():
-    """工作流是通用的 ``ld1.x``：一次一份输入（AE / 生成赝势都算）。"""
+    """The workflow is the generic ``ld1.x``: one input at a time (AE and
+    pseudopotential generation both count).
+    """
     assert workflows.get("ld1.x").groups == ("input",)
     assert not workflows.get("ld1.x").scans
     with pytest.raises(InputError):
@@ -426,7 +438,7 @@ def test_cli_prepare(local_parameters, capsys):
     assert code == 0
     assert (run_dir / "U.in").is_file()
     out = capsys.readouterr().out
-    assert "已生成" in out and "qe_path" in out
+    assert "generated  : " in out and "qe_path" in out
 
 
 def test_cli_dry_run_prints_without_writing(local_parameters, capsys):
@@ -443,7 +455,7 @@ def test_cli_error_exit_code(local_parameters, capsys):
     path = write_input(run_dir, workflow="nope")
 
     assert cli.main(["prepare", "-i", str(path)]) == 2
-    assert "错误" in capsys.readouterr().err
+    assert "error" in capsys.readouterr().err
 
 
 def test_cli_requires_input_argument():

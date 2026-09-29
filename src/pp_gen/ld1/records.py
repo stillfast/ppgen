@@ -15,19 +15,21 @@ import re
 from ..reporting.metrics import ReportError
 
 def read_tasks(output_json: Path) -> List[Mapping[str, object]]:
-    """读 ``output.json`` 里的任务清单。"""
+    """Read the task list from ``output.json``."""
     payload = json.loads(Path(output_json).read_text(encoding="utf-8"))
     tasks = payload.get("tasks")
     if not isinstance(tasks, list) or not tasks:
-        raise ReportError(f"{output_json} 里没有 tasks（或为空）")
+        raise ReportError(f"{output_json} has no tasks (or an empty list)")
     return tasks
 
 
 def read_test_blocks(path: Path) -> List[Dict[str, object]]:
-    """读 ``ld1.test``：**每个测试组态一块**（``nconf>1`` 时一块接一块）。
+    """Read ``ld1.test``: **one block per test configuration** (with
+    ``nconf>1`` the blocks follow one another).
 
-    每块：逐态能级表 + ``Etot``/``Etotps``（+ QE 对第 2..N 个组态打印的
-    ``dEtot_ae`` / ``dEtot_ps`` / ``Delta E``）。块的顺序就是 ``configts`` 的顺序。
+    Each block: the per-state energy table plus ``Etot``/``Etotps`` (and the
+    ``dEtot_ae`` / ``dEtot_ps`` / ``Delta E`` that QE prints for the 2nd..Nth
+    configuration). The block order is the ``configts`` order.
     """
     blocks: List[Dict[str, object]] = []
     current: Optional[Dict[str, object]] = None
@@ -43,7 +45,7 @@ def read_test_blocks(path: Path) -> List[Dict[str, object]]:
             continue
         match = re.match(r"^\s*(?:d)?Etot(?:_ae)?\s*=\s*(-?[\d.]+)", line)
         if match:
-            if current is not None:                     # 上一块收尾
+            if current is not None:                     # close the previous block
                 blocks.append(current)
             current = {"etot": None, "etotps": None, "d_ae": None,
                        "d_ps": None, "delta": None, "states": tuple(states)}
@@ -64,7 +66,7 @@ def read_test_blocks(path: Path) -> List[Dict[str, object]]:
             current["delta"] = float(match.group(2))
     if current is not None:
         blocks.append(current)
-    if states:                                          # 末尾多余的表行
+    if states:                                          # trailing table rows without a block
         if blocks:
             blocks[-1] = dict(blocks[-1], states=tuple(
                 list(blocks[-1]["states"]) + states))
@@ -75,15 +77,16 @@ def read_test_blocks(path: Path) -> List[Dict[str, object]]:
 
 
 def read_test_file(path: Path) -> Dict[str, object]:
-    """读 ``ld1.test``：每个测试组态一块（逐态能级表 + 两个总能量）。
+    """Read ``ld1.test``: one block per test configuration (per-state energy
+    table plus the two total energies).
 
-    格式（源码 ``write_resultsps.f90:100-150``）::
+    Format (source ``write_resultsps.f90:100-150``)::
 
-        5F   1( 3.00)   -0.245620   -0.245480   -0.000130      <- 态 占据 eAE ePS ΔE
+        5F   1( 3.00)   -0.245620   -0.245480   -0.000130   <- state occ eAE ePS ΔE
         6S   1( 2.00)   ...
-        Etot  =  -55958.130614 Ry, ...        <- 全电子总能量
-        Etotps =    -181.748488 Ry, ...       <- 赝势总能量
-        dEtot_ae = 0.145115 Ry                <- 只对第 2..nconf 个组态打印
+        Etot  =  -55958.130614 Ry, ...        <- all-electron total energy
+        Etotps =    -181.748488 Ry, ...       <- pseudopotential total energy
+        dEtot_ae = 0.145115 Ry                <- only for configurations 2..nconf
         dEtot_ps = 0.145594 Ry, Delta E= -0.000478 Ry
     """
     states: List[Mapping[str, object]] = []
@@ -117,7 +120,8 @@ def read_test_file(path: Path) -> Dict[str, object]:
 
 
 def _config_list(payload: Mapping[str, object]) -> Tuple[List[str], int]:
-    """从参数文件里读 ``test.nconf`` 与 ``configts(1..N)``（单次运行模式要用）。"""
+    """Read ``test.nconf`` and ``configts(1..N)`` from the parameter file
+    (needed by the single-run mode)."""
     reference, _ = _reference_config(payload)
     raw = payload.get("input")
     if not isinstance(raw, str):
@@ -145,30 +149,33 @@ def _config_list(payload: Mapping[str, object]) -> Tuple[List[str], int]:
 
 
 def _reference_config(payload: Mapping[str, object]) -> Tuple[str, str]:
-    """参考组态 = 生成 PP 时 ``&test`` 里的 ``configts(1)``。
+    """Reference configuration = ``configts(1)`` of ``&test`` in the generation
+    parameters.
 
-    ΔE 是相对量，得有个基准。用生成参数里那个（与 ``config:`` 一致），
-    比"取第一个任务"更不容易出错。
+    ΔE is a relative quantity and needs a baseline. The one in the generation
+    parameters (matching ``config:``) is less error-prone than taking the first
+    task.
     """
     from ..core import settings as config_mod
     from ..inputs import parameter_files as parameters, request as run_input
 
     raw = payload.get("input")
     if not isinstance(raw, str):
-        return "", "（output.json 里没有 input 字段）"
+        return "", "(output.json has no input field)"
     try:
         run = run_input.load(Path(raw))
         root = config_mod.parameters_root()
         group = next((name for name in run.parameters
                       if name != "configts"), None)
         if group is None:
-            return "", "（input.json 里没有生成参数组）"
+            return "", "(input.json has no generation parameter group)"
         sections = parameters.load_set(group, run.parameters[group], root).sections
     except PpGenError as exc:
-        return "", f"（读生成参数失败：{exc}）"
+        return "", f"(reading the generation parameters failed: {exc})"
     test = sections.get("test")
     reference = ""
     if isinstance(test, Mapping):
         reference = str(test.get("configts(1)", "") or "").strip()
-    return reference, (f"生成参数 {Path(raw).name} 的 test.configts(1)"
-                       if reference else "（生成参数里没有 test.configts(1)）")
+    return reference, (f"test.configts(1) of the generation parameters {Path(raw).name}"
+                       if reference else
+                       "(the generation parameters have no test.configts(1))")

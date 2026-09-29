@@ -27,9 +27,9 @@ METRIC_FIELDS = {
 }
 
 
-METRIC_NAMES = {"minimum": "最小值", "median": "中位数",
-                "average": "平均值", "maximum": "最大值",
-                "pole": "极点重合"}
+METRIC_NAMES = {"minimum": "minimum", "median": "median",
+                "average": "average", "maximum": "maximum",
+                "pole": "pole coincidence"}
 
 
 METRICS = tuple(METRIC_FIELDS) + ("pole",)
@@ -45,39 +45,41 @@ _L_OF = {letter: index for index, letter in enumerate("spdfghik")}
 
 
 class ReportError(PpGenError):
-    """报告生成不出来（输入文件不对、两边对不上…）。"""
+    """The report cannot be produced (bad input files, the two sides do not match, ...)."""
 
 
 @dataclass(frozen=True)
 class PointMetrics:
-    """一个扫描点的分析结果。"""
+    """The analysis result of one scan point."""
 
     orbital: str
-    #: 扫描值（rc_scan 是 rcut，energy_scan 是 ener）—— 字段名沿用旧说法
+    #: Scan value (rcut for rc_scan, ener for energy_scan); the field name is
+    #: generic because the scanned quantity depends on the workflow
     value: Optional[float]
     directory: Path
     label: str
-    #: 跑失败了就没有这些
+    #: Absent when the point failed
     ok: bool
     skipped: str = ""
     channel: Optional[int] = None
-    #: 各通道的 |ΔL| 统计（字段名 -> 数值）
+    #: |dL| statistics per channel (field name -> value)
     per_channel: Mapping[int, Mapping[str, float]] = field(default_factory=dict)
-    #: 被扫通道对应通道的统计量（排序用）
+    #: The statistic of the channel matching the scanned orbital (used for ranking)
     scanned: Optional[float] = None
-    #: 所有通道池化的同一个统计量
+    #: The same statistic pooled over all channels
     pooled: Optional[float] = None
-    #: 逐通道的极点/零点对照（``parser.json`` 里那两块的结构）
+    #: Per-channel pole/zero comparison (the structure of those two blocks in ``parser.json``)
     features: Mapping[int, Mapping[str, object]] = field(default_factory=dict)
-    #: ``--pole`` 排序用的极点汇总（:func:`pole_stats` 的结果）
+    #: Pole summary used for ``--pole`` ranking (the result of :func:`pole_stats`)
     pole: Mapping[str, object] = field(default_factory=dict)
-    #: 这个点画出来的东西（计算成功才有）
+    #: What was drawn for this point (only when the computation succeeded)
     figure: Optional[Path] = None
     parser: Optional[Path] = None
     plot_json: Optional[Path] = None
-    #: 画图/写 parser.json 失败时的原因
+    #: Reason of a failed plot / parser.json write
     render_error: str = ""
-    #: 扫的是哪一列（表头、单位、选择依据图的横轴都看它）
+    #: Which column is scanned (the table heading, the unit and the x axis of the
+    #: decision figure all read it)
     axis: object = scan_axis.RCUT_AXIS
 
     @property
@@ -86,39 +88,39 @@ class PointMetrics:
 
     @property
     def pole_coincide(self) -> Optional[bool]:
-        """排序范围内的极点是否**全都重合**（``poles.coincide``）。"""
+        """Whether the poles inside the ranking scope **all coincide** (``poles.coincide``)."""
         value = self.pole.get("coincide")
         return bool(value) if self.pole else None
 
     @property
     def pole_delta(self) -> Optional[float]:
-        """排序范围内的极点 ΔE **合计**（``poles.pairs[].delta`` 之和）。
+        """The **sum** of the pole ΔE inside the ranking scope (the sum of ``poles.pairs[].delta``).
 
-        配不上的对没有 ΔE 可比 → ``inf``。
+        Pairs that cannot be matched have no ΔE to compare -> ``inf``.
         """
         value = self.pole.get("delta")
         return None if value is None else float(value)
 
     @property
     def pole_unmatched(self) -> int:
-        """配不上的对数（窗口里压根没有 AE 极点可配）。"""
+        """The number of unmatched pairs (no AE pole at all inside the window to match)."""
         return int(self.pole.get("unmatched") or 0)
 
     @property
     def pole_scope(self) -> Tuple[int, ...]:
-        """参与极点汇总的通道。"""
+        """The channels taking part in the pole summary."""
         return tuple(self.pole.get("scope") or ())
 
     @property
     def pole_channels(self) -> Mapping[int, Mapping[str, object]]:
-        """逐通道的极点汇总（``{l: {"coincide":…, "delta":…, …}}``）。"""
+        """Per-channel pole summary (``{l: {"coincide":..., "delta":..., ...}}``)."""
         value = self.pole.get("channels")
         return value if isinstance(value, Mapping) else {}
 
 
 @dataclass(frozen=True)
 class ConfigRow:
-    """``configts`` 工作流里一个测试组态的结果。"""
+    """The result of one test configuration in the ``configts`` workflow."""
 
     index: int
     config: str
@@ -126,22 +128,24 @@ class ConfigRow:
     label: str = ""
     ok: bool = False
     skipped: str = ""
-    #: 这个组态的价电子数（与生成组态不同就不能直接比）
+    #: Valence electron count of this configuration (a different count than the
+    #: generating configuration is not directly comparable)
     n_electrons: int = 0
-    etot: Optional[float] = None          # AE 总能量（Ry）
-    etotps: Optional[float] = None        # PS 总能量（Ry）
-    #: 逐态 AE/PS 能级：``{"label", "occ", "ae", "ps", "delta_mry"}``
+    etot: Optional[float] = None          # AE total energy (Ry)
+    etotps: Optional[float] = None        # PS total energy (Ry)
+    #: AE/PS levels per state: ``{"label", "occ", "ae", "ps", "delta_mry"}``
     states: Tuple[Mapping[str, object], ...] = ()
-    #: 相对参考组态：``E_x(这个组态) − E_x(参考)``（与 QE 的 dEtot 同号约定）
+    #: Relative to the reference configuration: ``E_x(this config) - E_x(reference)``
+    #: (the same sign convention as the dEtot of QE)
     d_ae: Optional[float] = None
     d_ps: Optional[float] = None
-    delta: Optional[float] = None         # δ = d_ae − d_ps
+    delta: Optional[float] = None         # δ = d_ae - d_ps
     note: str = ""
 
 
 @dataclass(frozen=True)
 class ConfigtsReport:
-    """``ppgen report -i output.json``（``configts`` 工作流）的结果。"""
+    """The result of ``ppgen report -i output.json`` (the ``configts`` workflow)."""
 
     output_json: Path
     out_file: Path
@@ -155,13 +159,13 @@ class ConfigtsReport:
 
 @dataclass(frozen=True)
 class OrbitalReport:
-    """一个轨道（一组扫描点）的结果。"""
+    """The result of one orbital (a group of scan points)."""
 
     orbital: str
     channel: Optional[int]
     points: Tuple[PointMetrics, ...]
     best: Optional[PointMetrics]
-    #: 扫的是哪一列（表头/单位/图轴都用它）
+    #: Which column is scanned (the table heading, the unit and the figure axes use it)
     axis: object = scan_axis.RCUT_AXIS
 
     @property
@@ -171,7 +175,7 @@ class OrbitalReport:
 
 @dataclass(frozen=True)
 class ReportResult:
-    """``report`` 干了什么。"""
+    """What ``report`` did."""
 
     output_json: Path
     plot_json: Path
@@ -183,7 +187,7 @@ class ReportResult:
     pole_threshold: float
     orbitals: Tuple[OrbitalReport, ...]
     markdown: str
-    #: "为什么选这个 r_c"那张图的路径（`--no-decision-figure` 或干跑时为 None）
+    #: Path of the "why this r_c" figure (``None`` with ``--no-decision-figure`` or in a dry run)
     decision_file: Optional[Path] = None
     skipped: Tuple[Tuple[Path, str], ...] = field(default=())
     warnings: Tuple[str, ...] = field(default=())
@@ -191,22 +195,26 @@ class ReportResult:
 
 def pole_stats(features: Mapping[int, Mapping[str, object]],
                channels: Sequence[int]) -> Dict[str, object]:
-    """把若干通道的**极点**块合成 ``--pole`` 排序要用的几个数。
+    """Combine the **pole** blocks of several channels into the numbers the ``--pole`` ranking needs.
 
-    数据来源与 ``parser.json`` 一致 —— 就是 ``poles.coincide`` 与
-    ``poles.pairs[].delta``：
+    The data source is the same as in ``parser.json`` -- namely
+    ``poles.coincide`` and ``poles.pairs[].delta``:
 
-    * ``coincide``：这些通道的极点**全都**重合（个数相同、且每个都能在
-      ``pole_threshold`` 内配上）；
-    * ``delta``：所有能量对的 ``ΔE`` **合计**，越小越好；下面两类"结构上就不
-      一致"的情况没有 ΔE 可比，一律记 ``inf``（报告里写成"配不上"）：
+    * ``coincide``: the poles of these channels **all** coincide (the same count,
+      and each one matchable within ``pole_threshold``);
+    * ``delta``: the **sum** of the ``ΔE`` of all energy pairs, smaller is
+      better; the two cases below are structurally inconsistent and have no ΔE to
+      compare, so they are recorded as ``inf`` (printed as "unmatched" in the report):
 
-      - 窗口里根本没有 AE 极点可配的对（``delta`` 为 ``null``）；
-      - **两边的极点个数不一样** —— ``pairs`` 是按 PS 侧的极点配的，AE 侧多出来
-        的极点在 ``pairs`` 里根本不出现，不单独算就会让"PS 连极点都没有"的点
-        显得 ΔE 最小（0），排序反而挑中它；
-    * ``unmatched``：配不上的对数（``delta`` 为 ``null`` 的对 + 个数之差）；
-    * ``channels``：逐通道的同名几个数，报告里逐通道列出来。
+      - pairs with no AE pole at all inside the window (``delta`` is ``null``);
+      - **a different pole count on the two sides** -- ``pairs`` is built from the
+        poles of the PS side, and surplus poles of the AE side do not appear in
+        ``pairs`` at all; without counting them separately, a point where "the PS
+        has no pole at all" would look like the smallest ΔE (0) and the ranking
+        would pick it;
+    * ``unmatched``: the number of unmatched pairs (pairs with a ``null``
+      ``delta`` plus the count difference);
+    * ``channels``: the same numbers per channel, listed channel by channel in the report.
     """
     coincide = True
     total = 0.0
@@ -220,8 +228,9 @@ def pole_stats(features: Mapping[int, Mapping[str, object]],
         pairs = block.get("pairs") or ()
         channel_delta = 0.0
         channel_unmatched = 0
-        # 个数不一样 = 有极点只有一边有：AE 侧多出来的那些在 pairs 里不出现，
-        # 这里按"配不上"记，免得上限被"空 pairs 的 0 和"顶掉
+        # a count mismatch means some poles exist on one side only: the surplus
+        # ones of the AE side never appear in pairs, so they are counted as
+        # "unmatched" here, so that an empty pairs list summing to 0 cannot win
         missing = abs(_feature_count(block, "ae") - _feature_count(block, "ps"))
         if missing:
             channel_delta = _INF
@@ -245,7 +254,7 @@ def pole_stats(features: Mapping[int, Mapping[str, object]],
 
 
 def _feature_count(block: Mapping[str, object], side: str) -> int:
-    """``feature_block`` 里某一侧的个数（``{"ae": {"n": …}}``）。"""
+    """The count of one side inside a ``feature_block`` (``{"ae": {"n": ...}}``)."""
     side_block = block.get(side)
     if isinstance(side_block, Mapping):
         count = side_block.get("n")
@@ -258,7 +267,7 @@ def _feature_count(block: Mapping[str, object], side: str) -> int:
 
 
 def channel_of(orbital: str) -> Optional[int]:
-    """轨道标签（``5F``）-> 角动量 ``l``；认不出返回 ``None``。"""
+    """Orbital label (``5F``) -> angular momentum ``l``; ``None`` when it cannot be read."""
     text = "".join(ch for ch in orbital if ch.isalpha())
     if not text:
         return None
@@ -268,10 +277,11 @@ def channel_of(orbital: str) -> Optional[int]:
 def analyse_point(task: Mapping[str, object], spec: PlotSpec, *,
                   metric: str = "median",
                   scope: str = "scanned") -> PointMetrics:
-    """按 ``plot.json`` 的设置分析一个扫描目录。"""
+    """Analyse one scan directory according to the settings of ``plot.json``."""
     directory = Path(str(task.get("directory", "")))
     orbital = str(task.get("orbital") or "")
-    # 扫描值在哪个键上由任务自己的 "scanned" 说了算（老记录只有 "rcut"）
+    # which key holds the scan value is up to the task's own "scanned"; records
+    # without it fall back to "rcut"
     axis = scan_axis.axis_of(task.get("scanned"))
     raw = task.get(axis.key, task.get("rcut"))
     label = str(task.get("label") or directory.name)
@@ -282,18 +292,18 @@ def analyse_point(task: Mapping[str, object], spec: PlotSpec, *,
                             label=label, ok=False, skipped=reason, axis=axis)
 
     if task.get("exit_code") not in (0, None) or task.get("exit_code") is None:
-        # 退出码非 0，或者压根没跑成（缺输入 / 超时）
-        return _skipped(f"退出码 {task.get('exit_code')}："
+        # non-zero exit code, or the point never ran (missing input / timeout)
+        return _skipped(f"exit code {task.get('exit_code')}: "
                         f"{task.get('exit_reason', '')}".strip())
 
     files: List[DlogFile] = []
     for name in spec.data.wfcs:
         path = directory / name.name
         if not path.is_file():
-            return _skipped(f"缺 {name.name}")
+            return _skipped(f"missing {name.name}")
         files.append(read_dlog(path))
     if len(files) != 2:
-        return _skipped(f"plot.json 里给了 {len(files)} 个文件，极点对照需要两个")
+        return _skipped(f"plot.json lists {len(files)} files, comparing poles needs two")
 
     window = spec.figure.xlim
     threshold = spec.analysis.pole_threshold
@@ -316,10 +326,11 @@ def analyse_point(task: Mapping[str, object], spec: PlotSpec, *,
                                    threshold=threshold),
         }
     if not per_channel:
-        return _skipped("两个文件没有共同的通道")
+        return _skipped("the two files share no channel")
 
-    # 极点汇总（`--pole` 排序用）：只看被扫轨道对应的那个通道；
-    # 认不出通道（或那个通道不在共同通道里）就退回所有通道
+    # pole summary (for --pole ranking): look only at the channel of the scanned
+    # orbital; when the channel cannot be read (or is not among the shared ones),
+    # fall back to all channels
     channel = channel_of(orbital)
     pole_scope = list(shared)
     if scope == "scanned" and channel is not None and channel in features:
@@ -338,7 +349,7 @@ def analyse_point(task: Mapping[str, object], spec: PlotSpec, *,
 
 def _pooled_stat(files: Sequence[DlogFile], window: Sequence[float],
                  metric: str) -> Optional[float]:
-    """所有通道、所有能量点池化后的统计量。"""
+    """The statistic pooled over all channels and all energy points."""
     if len(files) != 2:
         return None
     mask = window_mask(files[0], window)
@@ -353,7 +364,7 @@ def _pooled_stat(files: Sequence[DlogFile], window: Sequence[float],
 
 
 def _rankable_by_pole(item: PointMetrics) -> bool:
-    """``--pole`` 下这个点能不能参与排序（算出了极点汇总就行）。"""
+    """Whether this point can take part in the ``--pole`` ranking (a pole summary was computed)."""
     return item.pole_coincide is not None
 
 
@@ -363,12 +374,14 @@ def _stat_or_inf(item: PointMetrics, metric: str, scope: str) -> float:
 
 
 def _sort_key(item: PointMetrics, metric: str, scope: str) -> Tuple[float, ...]:
-    """排序键（越小越好）。
+    """Sort key (smaller is better).
 
-    ``--pole`` 的次序是：**先看极点是否重合**（重合的排前面）→ **再比极点
-    ΔE 合计**（越小越好；配不上的对记 ``inf``，排在后面）→ ΔE 也一样才比
-    ``|ΔL|`` 的中位数。也就是说"极点对得上优先，对得上之后再比谁对得准，
-    全都一样才看曲线差多少"。
+    The ``--pole`` order is: **first whether the poles coincide** (coinciding ones
+    come first) -> **then the pole ΔE sum** (smaller is better; unmatched pairs
+    count as ``inf`` and sort last) -> only when ΔE ties, the median of ``|dL|``.
+    In other words "matching poles win, among those the one matching them more
+    accurately wins, and only when everything ties does how much the curves
+    differ decide".
     """
     if metric == "pole":
         delta = item.pole_delta
@@ -384,13 +397,13 @@ def _metric_of(item: PointMetrics, metric: str, scope: str) -> Optional[float]:
     if scope == "scanned" and item.scanned is not None:
         return item.scanned
     if scope == "scanned" and item.channel is not None:
-        # 认不出被扫通道时退回该通道的任意统计量
+        # when the scanned channel cannot be read, fall back to any statistic of that channel
         return item.per_channel.get(item.channel, {}).get(metric)
     return item.pooled
 
 
 def _orbital_key(orbital: str) -> Tuple[int, int, str]:
-    """按主量子数 / 角动量排轨道（4F 5D 5F 6S… 的老规矩）。"""
+    """Sort orbitals by principal quantum number / angular momentum (4F 5D 5F 6S ...)."""
     digits = "".join(ch for ch in orbital if ch.isdigit())
     letters = "".join(ch for ch in orbital if ch.isalpha())
     n = int(digits) if digits else 99

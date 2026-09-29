@@ -8,11 +8,13 @@ from typing import Optional, Sequence
 
 
 def _channel_text(channel: Optional[int]) -> str:
-    """报告里那一列：认不出单一通道（``rcloc`` 这种影响整份赝势的量）就写"全部"。"""
-    return "全部" if channel is None else str(channel)
+    """Report column value: 'all' when no single channel can be identified, as for
+    ``rcloc``, which affects the whole pseudopotential.
+    """
+    return "all" if channel is None else str(channel)
 
 
 def _path_short(path: Path) -> str:
-    """路径太长就把前面的目录省掉（报告里好读）。"""
+    """Shorten a long path by dropping its leading directories, for readability in the report."""
     parts = str(path).split("/")
     return str(path) if len(parts) <= 4 else ".../" + "/".join(parts[-4:])

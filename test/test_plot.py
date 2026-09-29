@@ -1,12 +1,13 @@
-"""``ppgen plot`` 的测试。
+"""Tests for ``ppgen plot``.
 
-分三层：
+Three layers:
 
-* **读** —— ``ld1.wfc`` 的解析与派生量（``u`` / ``R`` / ``rho``），含各种坏文件；
-* **画** —— 直接检查 ``Axes`` 的状态（xlim、轴标题、线数、图例、线型/颜色），
-  不去比对 PNG 像素；
-* **串** —— ``plot.json`` 的推断与校验、端到端的 CLI，以及一个真跑
-  prepare -> run -> plot 的 slow 集成测试。
+* **read** -- parsing ``ld1.wfc`` and the derived quantities (``u`` / ``R`` / ``rho``),
+  including all kinds of broken files;
+* **draw** -- inspecting the ``Axes`` state directly (xlim, axis labels, number of lines,
+  legend, linestyle/color) instead of comparing PNG pixels;
+* **chain** -- inference and validation of ``plot.json``, the end-to-end CLI, and one slow
+  integration test that really runs prepare -> run -> plot.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ REFERENCE_DIR = (Path(__file__).resolve().parent.parent.parent / "ppgen"
 
 @pytest.fixture(autouse=True)
 def _close_figures():
-    """每个测试结束后关掉 matplotlib 的图，免得堆着。"""
+    """Close the matplotlib figures after every test so they do not pile up."""
     yield
     try:
         import matplotlib.pyplot as plt
@@ -45,18 +46,18 @@ def _close_figures():
 
 
 # --------------------------------------------------------------------------
-# 造数据的小工具
+# Small helpers that build test data
 # --------------------------------------------------------------------------
 @pytest.fixture()
 def plotted(tmp_path: Path) -> Path:
-    """一个含 ld1.wfc + plot.json 的目录。"""
+    """A directory holding ld1.wfc + plot.json."""
     write_wfc(tmp_path, ("2S", "1S"), simple_rows())
     write_plot_json(tmp_path)
     return tmp_path
 
 
 def spec_of(**kwargs) -> FigureSpec:
-    """直接造一个 FigureSpec（跳过 plot.json）。"""
+    """Build a FigureSpec directly, skipping plot.json."""
     base = dict(xlabel="r(Å)", ylabel="rR(r)", title="t",
                 fig_name="x.png", quantity="u", quantity_source="test",
                 x_unit="angstrom", x_unit_source="test")
@@ -65,7 +66,7 @@ def spec_of(**kwargs) -> FigureSpec:
 
 
 # --------------------------------------------------------------------------
-# 读 ld1.wfc
+# Reading ld1.wfc
 # --------------------------------------------------------------------------
 def test_read_wfc_basic(tmp_path):
     path = write_wfc(tmp_path, ("2S", "1S"), simple_rows())
@@ -77,7 +78,7 @@ def test_read_wfc_basic(tmp_path):
     assert wfc.r_bohr[0] == pytest.approx(0.01)
     assert wfc.columns["2S"][0] == pytest.approx(0.02)
     assert wfc.r_angstrom[-1] == pytest.approx(0.10 * config.BOHR_ANGSTROM)
-    assert wfc.sorted_labels() == ("1S", "2S")        # 按 n/l 排过
+    assert wfc.sorted_labels() == ("1S", "2S")        # sorted by n/l
 
 
 def test_read_wfc_skips_comment_and_blank_lines(tmp_path):
@@ -86,7 +87,7 @@ def test_read_wfc_skips_comment_and_blank_lines(tmp_path):
         "\n#   r   2S\n"
         "   0.01  1.0\n"
         "\n"
-        "! 中间插一句注释\n"
+        "! a comment in the middle\n"
         "   0.02  2.0\n",
         encoding="utf-8")
 
@@ -96,15 +97,15 @@ def test_read_wfc_skips_comment_and_blank_lines(tmp_path):
 
 
 @pytest.mark.parametrize("body,message", [
-    ("", "没有 '#' 开头的表头"),
-    ("# r 2S\n", "只有表头"),
-    ("#   x   2S\n  0.01  1.0\n  0.02  2.0\n", "不是 'r'"),
-    ("#\n", "至少要有"),
+    ("", "has no '#' header line"),
+    ("# r 2S\n", "has only a header, no data lines"),
+    ("#   x   2S\n  0.01  1.0\n  0.02  2.0\n", "the first header column is 'x', not 'r'"),
+    ("#\n", "the header has only 0 columns"),
 
-    ("# r 2S\n 0.01 1\n 0.02 2 3\n", "列数对不上"),
-    ("# r 2S\n 0.02 1\n 0.01 2\n", "不是严格递增"),
-    ("# r 2S\n 0.01 1\n", "只有一个网格点"),
-    ("# r 2S\n 0.01 abc\n 0.02 2\n", "不是数"),
+    ("# r 2S\n 0.01 1\n 0.02 2 3\n", "column count mismatch"),
+    ("# r 2S\n 0.02 1\n 0.01 2\n", "r is not strictly increasing"),
+    ("# r 2S\n 0.01 1\n", "has only one grid point"),
+    ("# r 2S\n 0.01 abc\n 0.02 2\n", "is not a number"),
 ])
 def test_read_wfc_rejects_broken_files(tmp_path, body, message):
     path = tmp_path / "ld1.wfc"
@@ -115,10 +116,12 @@ def test_read_wfc_rejects_broken_files(tmp_path, body, message):
 
 
 def test_read_wfc_marks_the_two_halves_of_ld1ps(tmp_path):
-    """QE 的 ld1ps.wfc 故意把每个态写两遍（赝轨道 + 相位对齐的全电子轨道）。
+    """QE's ld1ps.wfc deliberately writes every state twice (pseudo orbital + phase-aligned
+    all-electron orbital).
 
-    源码 write_resultsps.f90:181-204：前半 ``elts(i)``/``phits`` 是赝轨道，后半
-    ``el(j)``/``psi`` 是全电子轨道。这里要认出来并标成 ``(PS)`` / ``(AE)``。
+    Source write_resultsps.f90:181-204: the first half ``elts(i)``/``phits`` holds the pseudo
+    orbitals, the second half ``el(j)``/``psi`` the all-electron orbitals. This test checks
+    that the two halves are recognised and labelled ``(PS)`` / ``(AE)``.
     """
     path = tmp_path / "ld1ps.wfc"
     path.write_text("#  r   5F   6S   5F   6S\n"
@@ -133,7 +136,7 @@ def test_read_wfc_marks_the_two_halves_of_ld1ps(tmp_path):
 
 
 def test_read_wfc_dedups_other_repeats_instead_of_failing(tmp_path):
-    """真·重复只加后缀：文件格式是 QE 定的，不该整个判成坏的。"""
+    """Repeated names only get a suffix: the format is QE's, so a repeat is not a broken file."""
     path = tmp_path / "ld1.wfc"
     path.write_text("#  r   2S   2S   2S\n"
                     " 0.01  1.0  2.0  3.0\n"
@@ -145,7 +148,7 @@ def test_read_wfc_dedups_other_repeats_instead_of_failing(tmp_path):
 
 
 def test_plot_styles_the_two_halves_apart(tmp_path, monkeypatch):
-    """同一份 ld1ps.wfc 的两半：**同色、实线（AE）/ 虚线（PS）**。"""
+    """The two halves of one ld1ps.wfc: **same colour, solid (AE) / dashed (PS)**."""
     import matplotlib
     matplotlib.use("Agg")
     from matplotlib.legend import Legend
@@ -165,7 +168,7 @@ def test_plot_styles_the_two_halves_apart(tmp_path, monkeypatch):
 
     def fake_save(fig, out, **kw):
         captured["fig"] = fig
-        pathlib.Path(out).write_bytes(b"png")          # 只占位（下游要读大小）
+        pathlib.Path(out).write_bytes(b"png")          # placeholder: the caller reads its size
 
     monkeypatch.setattr(wavefunction, "save_figure", fake_save)
 
@@ -174,10 +177,10 @@ def test_plot_styles_the_two_halves_apart(tmp_path, monkeypatch):
     ax = captured["fig"].axes[0]
     styles = {}
     for line in ax.lines:
-        if len(line.get_xdata()) > 10:                 # 跳过 0 参考线
+        if len(line.get_xdata()) > 10:                 # skip the zero reference line
             styles.setdefault(line.get_color(), set()).add(line.get_linestyle())
-    assert len(styles) == 2                            # 两个态
-    assert all(value == {"-", "--"} for value in styles.values())   # 各一对
+    assert len(styles) == 2                            # two states
+    assert all(value == {"-", "--"} for value in styles.values())   # one pair each
     legend_texts = [text.get_text() for legend in
                     [child for child in ax.get_children()
                      if isinstance(child, Legend)]
@@ -188,8 +191,9 @@ def test_plot_styles_the_two_halves_apart(tmp_path, monkeypatch):
 
 
 def test_plot_drops_the_redundant_ae_half(tmp_path, monkeypatch):
-    """另一份文件已经给了全电子轨道 → ld1ps.wfc 里那一半不再重复画，
-    文件名标签也不加后缀（你写 `labels: [AE_radial, PS_radial]`，图例就是它们）。
+    """Another file already provides the all-electron orbitals, so that half of ld1ps.wfc is
+    not drawn twice and the file labels get no suffix (with `labels: [AE_radial, PS_radial]`
+    the legend shows exactly those labels).
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -201,12 +205,12 @@ def test_plot_drops_the_redundant_ae_half(tmp_path, monkeypatch):
     grid = "".join(f" {0.01 * step:.2f}  {step / 10:.3f}  {step / 5:.3f}"
                    f"  {-step / 10:.3f}  {-step / 5:.3f}\n"
                    for step in range(1, 21))
-    # ld1.wfc：全电子轨道（5F 6S）
+    # ld1.wfc: the all-electron orbitals (5F 6S)
     (tmp_path / "ld1.wfc").write_text(
         "#  r   5F   6S\n"
         + "".join(f" {0.01 * step:.2f}  {step / 10:.3f}  {step / 5:.3f}\n"
                   for step in range(1, 21)), encoding="utf-8")
-    # ld1ps.wfc：前半 PS、后半相位对齐的 AE（QE 的写法）
+    # ld1ps.wfc: first half PS, second half phase-aligned AE (QE's layout)
     (tmp_path / "ld1ps.wfc").write_text("#  r   5F   6S   5F   6S\n" + grid,
                                        encoding="utf-8")
     path = write_plot_json(tmp_path,
@@ -224,7 +228,7 @@ def test_plot_drops_the_redundant_ae_half(tmp_path, monkeypatch):
 
     ax = captured["fig"].axes[0]
     drawn = [line for line in ax.lines if len(line.get_xdata()) > 10]
-    assert len(drawn) == 4                             # 2 个 AE + 2 个 PS，不多画
+    assert len(drawn) == 4                             # 2 AE + 2 PS, nothing drawn twice
     entries = {}
     for legend in [child for child in ax.get_children()
                    if isinstance(child, Legend)]:
@@ -238,7 +242,7 @@ def test_plot_drops_the_redundant_ae_half(tmp_path, monkeypatch):
 
 
 def test_data_orbitals_restricts_the_states(tmp_path, monkeypatch):
-    """``data.orbitals`` 只画列出的态；匹配按态名（成对表头的后缀不算）。"""
+    """``data.orbitals`` draws only the listed states; matching is by plain state name."""
     import matplotlib
     matplotlib.use("Agg")
     from conftest import write_plot_json
@@ -265,8 +269,9 @@ def test_data_orbitals_restricts_the_states(tmp_path, monkeypatch):
 
     ax = captured["fig"].axes[0]
     assert len([line for line in ax.lines if len(line.get_xdata()) > 10]) == 2
-    assert result.series[0].states == ("5F", "6S")     # 4F 被筛掉
-    assert any("只画这些态" in text for text in result.warnings)
+    assert result.series[0].states == ("5F", "6S")     # 4F is filtered out
+    assert any("drawing only these states per data.orbitals" in text
+               for text in result.warnings)
     import matplotlib.pyplot as plt
     plt.close(captured["fig"])
 
@@ -286,7 +291,8 @@ def test_data_orbitals_unknown_name_warns_but_keeps_going(tmp_path):
 
     result = plotter.plot(path, write=False)
 
-    assert any("'8P'" in text and "已忽略" in text for text in result.warnings)
+    assert any("'8P'" in text and "appears in none of" in text
+               and "ignored" in text for text in result.warnings)
     assert result.n_curves == 1
 
 
@@ -302,7 +308,7 @@ def test_data_orbitals_nothing_matches_is_an_error(tmp_path):
                            data={"wfcs": ["ld1.wfc"], "orbitals": ["9Z"]},
                            figure={"xlim": [0.01, 1.0], "fig_name": "w.png"})
 
-    with pytest.raises(PlotError, match="一个态都没匹配上"):
+    with pytest.raises(PlotError, match="matched no state in these files"):
         plotter.plot(path, write=False)
 
 
@@ -312,16 +318,16 @@ def test_data_orbitals_rejects_nonsense(tmp_path):
 
     path = write_plot_json(tmp_path, data={"wfcs": ["ld1.wfc"],
                                           "orbitals": []})
-    with pytest.raises(PlotError, match="必须是非空列表"):
+    with pytest.raises(PlotError, match="must be a non-empty list"):
         load(path)
     path = write_plot_json(tmp_path, data={"wfcs": ["ld1.wfc"],
                                            "orbitals": ["5F", 3]})
-    with pytest.raises(PlotError, match="非字符串项"):
+    with pytest.raises(PlotError, match="non-string entry"):
         load(path)
 
 
 def test_read_wfc_missing_file(tmp_path):
-    with pytest.raises(PlotError, match="找不到"):
+    with pytest.raises(PlotError, match="wavefunction file not found"):
         read_wfc(tmp_path / "nope.wfc")
 
 
@@ -332,23 +338,23 @@ def test_state_sort_key_orders_by_n_then_l():
 
 
 # --------------------------------------------------------------------------
-# 派生量
+# Derived quantities
 # --------------------------------------------------------------------------
 def test_transform_u_R_rho(tmp_path):
     wfc = read_wfc(write_wfc(tmp_path, ("2S",), [(0.0, 0.0), (0.5, 1.0),
                                                  (1.0, 2.0)]))
 
     assert list(transform(wfc, "2S", "u")) == [0.0, 1.0, 2.0]
-    # R = u/r，r=0 处按 0 处理（那里 R 本身发散）
+    # R = u/r; r=0 is treated as 0 (R itself diverges there)
     assert list(transform(wfc, "2S", "R")) == [0.0, 2.0, 2.0]
     assert list(transform(wfc, "2S", "rho")) == [0.0, 1.0, 4.0]
 
 
 def test_transform_unknown_state_or_quantity(tmp_path):
     wfc = read_wfc(write_wfc(tmp_path, ("2S",), one_state_rows()))
-    with pytest.raises(PlotError, match="没有态"):
+    with pytest.raises(PlotError, match="has no state"):
         transform(wfc, "9Z", "u")
-    with pytest.raises(PlotError, match="未知的量"):
+    with pytest.raises(PlotError, match="unknown quantity"):
         transform(wfc, "2S", "wat")
 
 
@@ -356,14 +362,14 @@ def test_transform_unknown_state_or_quantity(tmp_path):
     ("rR(r)", "u"), ("u", "u"), ("rR", "u"),
     ("R(r)", "R"), ("r", "R"),
     ("4πr²R²(r)", "rho"), ("rho", "rho"),
-    ("随便什么", None),
+    ("whatever", None),
 ])
 def test_canon_quantity(text, expected):
     assert canon_quantity(text) == expected
 
 
 # --------------------------------------------------------------------------
-# plot.json 的推断
+# Inference from plot.json
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("ylabel,expected", [
     ("rR(r)", "u"),
@@ -390,9 +396,9 @@ def test_infer_x_unit(xlabel, expected):
 
 def test_spec_infers_quantity_and_unit_from_labels(tmp_path, plotted):
     spec = load_spec(plotted / "plot.json")
-    # plot.json 里只有 mode/data/figure，figure 是空的 -> 全走默认
+    # plot.json holds only mode/data/figure and figure is empty -> everything is defaulted
     assert spec.figure.quantity == "u"
-    assert "默认" in spec.figure.quantity_source
+    assert "default (no ylabel given)" in spec.figure.quantity_source
     assert spec.figure.x_unit == "angstrom"
 
 
@@ -406,7 +412,7 @@ def test_spec_matches_the_users_plot_json_shape(tmp_path):
 
     assert spec.mode == "wavefunction"
     assert spec.data.wfcs == (tmp_path / "ld1.wfc",)
-    assert spec.data.labels == ("ld1",)                     # 没给 labels -> 用文件名
+    assert spec.data.labels == ("ld1",)                     # no labels given -> file name
     assert spec.figure.quantity == "u"
     assert "ylabel" in spec.figure.quantity_source
     assert spec.figure.x_unit == "angstrom"
@@ -426,9 +432,9 @@ def test_spec_explicit_overrides_beat_inference(tmp_path):
     spec = load_spec(path)
 
     assert spec.figure.quantity == "rho"
-    assert "显式" in spec.figure.quantity_source
+    assert "explicit quantity='rho'" in spec.figure.quantity_source
     assert spec.figure.x_unit == "bohr"
-    assert "显式" in spec.figure.x_unit_source
+    assert "explicit x_unit='bohr'" in spec.figure.x_unit_source
 
 
 def test_spec_resolves_wfcs_relative_to_plot_json(tmp_path, monkeypatch):
@@ -436,7 +442,7 @@ def test_spec_resolves_wfcs_relative_to_plot_json(tmp_path, monkeypatch):
     sub.mkdir()
     write_wfc(sub, ("2S",), one_state_rows())
     write_plot_json(sub, figure={"fig_name": "f.png"})
-    monkeypatch.chdir(tmp_path)                            # 从别处调用
+    monkeypatch.chdir(tmp_path)                            # called from elsewhere
 
     spec = load_spec(Path("run/plot.json"))
 
@@ -448,37 +454,37 @@ def test_spec_labels_must_match_wfcs(tmp_path):
     write_wfc(tmp_path, ("2S",), one_state_rows())
     path = write_plot_json(tmp_path, data={"wfcs": ["ld1.wfc"],
                                            "labels": ["a", "b"]})
-    with pytest.raises(PlotError, match="一一对应"):
+    with pytest.raises(PlotError, match="they must correspond one to one"):
         load_spec(path)
 
 
 @pytest.mark.parametrize("payload,message", [
     ({"data": {"wfcs": ["ld1.wfc"]}}, "mode"),
-    ({"mode": "nope", "data": {"wfcs": ["ld1.wfc"]}}, "还没实现"),
-    ({"mode": "wavefunction", "data": {}, "extra": 1}, "多余的键"),
-    ({"mode": "wavefunction", "data": {"wfcs": []}}, "非空列表"),
-    ({"mode": "wavefunction", "data": {"wfcs": [1]}}, "非字符串项"),
-    ({"mode": "wavefunction", "data": {"wfcs": ["a"], "nope": 1}}, "多余的键"),
+    ({"mode": "nope", "data": {"wfcs": ["ld1.wfc"]}}, "is not implemented"),
+    ({"mode": "wavefunction", "data": {}, "extra": 1}, "unexpected keys in top level"),
+    ({"mode": "wavefunction", "data": {"wfcs": []}}, "must be a non-empty list"),
+    ({"mode": "wavefunction", "data": {"wfcs": [1]}}, "non-string entry"),
+    ({"mode": "wavefunction", "data": {"wfcs": ["a"], "nope": 1}}, "unexpected keys in 'data'"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"figname": "x.png"}}, "多余的键"),
+      "figure": {"figname": "x.png"}}, "unexpected keys in 'figure'"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"xlim": [1.0]}}, "必须是两个数"),
+      "figure": {"xlim": [1.0]}}, "must be two numbers"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"ylim": [2.0, -2.0]}}, "颠倒"),
+      "figure": {"ylim": [2.0, -2.0]}}, "has its bounds swapped"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"xscale": "sqrt"}}, "不是"),
+      "figure": {"xscale": "sqrt"}}, "is not one of linear / log"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"fig_name": "sub/x.png"}}, "不能带目录"),
+      "figure": {"fig_name": "sub/x.png"}}, "must not contain a directory"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"dpi": 0}}, "正整数"),
+      "figure": {"dpi": 0}}, "must be a positive integer"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"quantity": "wat"}}, "认不出来"),
+      "figure": {"quantity": "wat"}}, "is not recognised"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"x_unit": "furlong"}}, "认不出来"),
+      "figure": {"x_unit": "furlong"}}, "is not recognised"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"core": [1, 2]}}, "必须是态标签"),
+      "figure": {"core": [1, 2]}}, "must be a list of state labels"),
     ({"mode": "wavefunction", "data": {"wfcs": ["ld1.wfc"]},
-      "figure": {"figsize": [7.0]}}, "两个正数"),
+      "figure": {"figsize": [7.0]}}, "must be two positive numbers"),
 ])
 def test_spec_rejects_bad_plot_json(tmp_path, payload, message):
     path = tmp_path / "plot.json"
@@ -490,17 +496,17 @@ def test_spec_rejects_bad_plot_json(tmp_path, payload, message):
 def test_spec_rejects_non_json(tmp_path):
     path = tmp_path / "plot.json"
     path.write_text("{oops", encoding="utf-8")
-    with pytest.raises(PlotError, match="不是合法 JSON"):
+    with pytest.raises(PlotError, match="is not valid JSON"):
         load_spec(path)
-    with pytest.raises(PlotError, match="找不到"):
+    with pytest.raises(PlotError, match="cannot find the plot configuration file"):
         load_spec(tmp_path / "nope.json")
 
 
 # --------------------------------------------------------------------------
-# 对数横轴
+# Logarithmic x axis
 # --------------------------------------------------------------------------
 def test_log_x_replaces_non_positive_xlim(tmp_path):
-    """对数轴上没有 0：``[0.0, 10.0]`` 的下限要被换掉，并且说出来。"""
+    """A log axis has no 0: the lower bound of ``[0.0, 10.0]`` is replaced and reported."""
     write_wfc(tmp_path, ("2S",), one_state_rows())
     path = write_plot_json(tmp_path, figure={"xscale": "log",
                                              "xlim": [0.0, 10.0]})
@@ -509,7 +515,7 @@ def test_log_x_replaces_non_positive_xlim(tmp_path):
 
     assert spec.figure.xlim == (0.01, 10.0)
     assert spec.figure.xscale == "log"
-    assert any("对数轴上无效" in w for w in spec.warnings)
+    assert any("is invalid on a log axis" in w for w in spec.warnings)
 
 
 def test_log_x_defaults_when_xlim_missing(tmp_path):
@@ -518,8 +524,8 @@ def test_log_x_defaults_when_xlim_missing(tmp_path):
 
     spec = load_spec(path)
 
-    assert spec.figure.xlim == (0.01, 10.0)          # 同参考图那套范围
-    assert any("没写 xlim" in w for w in spec.warnings)
+    assert spec.figure.xlim == (0.01, 10.0)          # same range as the reference figure
+    assert any("xlim was not given" in w for w in spec.warnings)
 
 
 def test_log_x_keeps_an_explicit_positive_xlim(tmp_path):
@@ -530,11 +536,11 @@ def test_log_x_keeps_an_explicit_positive_xlim(tmp_path):
     spec = load_spec(path)
 
     assert spec.figure.xlim == (0.001, 5.0)
-    assert not any("无效" in w for w in spec.warnings)
+    assert not any("invalid on a log axis" in w for w in spec.warnings)
 
 
 def test_log_x_floor_follows_the_display_unit(tmp_path):
-    """换成 bohr 显示时，下限是同一段物理半径（0.01 Å ≈ 0.0189 bohr）。"""
+    """Switching the unit to bohr keeps the same physical radius (0.01 Å ≈ 0.0189 bohr)."""
     write_wfc(tmp_path, ("2S",), one_state_rows())
     path = write_plot_json(tmp_path, figure={"xscale": "log", "x_unit": "bohr",
                                              "xlim": [0.0, 20.0]})
@@ -546,7 +552,7 @@ def test_log_x_floor_follows_the_display_unit(tmp_path):
 
 
 def test_linear_x_keeps_the_zero_lower_bound(tmp_path):
-    """线性轴上 0 是合法的，不该被动。"""
+    """On a linear axis 0 is legal and must be left alone."""
     write_wfc(tmp_path, ("2S",), one_state_rows())
     path = write_plot_json(tmp_path, figure={"xlim": [0.0, 10.0]})
 
@@ -562,11 +568,11 @@ def test_build_figure_log_x_axis(tmp_path):
 
     assert ax.get_xscale() == "log"
     assert ax.get_xlim() == (0.01, 10.0)
-    assert ax.get_yscale() == "linear"               # 只横轴改对数
+    assert ax.get_yscale() == "linear"               # only the x axis goes logarithmic
 
 
 def test_build_figure_log_x_masks_non_positive_r(tmp_path):
-    """对数横轴画不了 r<=0 的点，那些点要被丢掉（NaN），而不是画到左边框外。"""
+    """A log x axis cannot draw r<=0 points: those points become NaN, they are not drawn."""
     path = write_wfc(tmp_path, ("2S",), [(0.0, 0.0), (0.01, 1.0), (0.02, 2.0)])
     wfc = read_wfc(path)
     curve = Curve(state="2S", file_label="f", file_index=0,
@@ -606,12 +612,12 @@ def test_cli_plot_reports_log_x(plotted, capsys):
     assert cli.main(["plot", "-i", str(plotted / "plot.json")]) == 0
 
     captured = capsys.readouterr()
-    assert "（对数轴）" in captured.out
-    assert "没写 xlim" in captured.err          # 默认范围要讲清楚，不是猜的
+    assert " (log axis)" in captured.out
+    assert "xlim was not given" in captured.err   # the default range is stated, not guessed
 
 
 # --------------------------------------------------------------------------
-# 画：直接检查 Axes，不比对像素
+# Drawing: inspect the Axes directly, no pixel comparison
 # --------------------------------------------------------------------------
 def _curves(tmp_path, states=("2S", "1S"), files=1):
     out = []
@@ -637,16 +643,16 @@ def test_build_figure_applies_labels_limits_and_lines(tmp_path):
     assert ax.get_ylabel() == "rR(r)"
     assert ax.get_title() == "ae_radial"
     curves = [line for line in ax.get_lines()
-              if not line.get_label().startswith("_")]     # 排掉零线的 "_child"
+              if not line.get_label().startswith("_")]     # drop the zero line's "_child"
     assert len(curves) == 2
-    assert [line.get_label() for line in curves] == ["1S", "2S"]   # 按 n/l 排
+    assert [line.get_label() for line in curves] == ["1S", "2S"]   # ordered by n/l
 
 
 def test_build_figure_zero_line_present_when_linear(tmp_path):
     _, ax = build_figure(_curves(tmp_path), spec_of())
     zero = [line for line in ax.get_lines() if line.get_ydata()[0] == 0.0
             and len(line.get_ydata()) == 2]
-    assert zero, "线性纵轴应当有一条 y=0 的参考线"
+    assert zero, "a linear y axis should carry a y=0 reference line"
 
 
 def test_build_figure_single_file_legend_lists_states_only(tmp_path):
@@ -661,7 +667,7 @@ def test_build_figure_multi_file_uses_linestyle_per_file(tmp_path):
 
     _, ax = build_figure(curves, spec_of())
 
-    # ax.lines 的前 len(curves) 条就是 curves 的顺序（y=0 参考线是最后才加的）
+    # the first len(curves) lines of ax.lines follow curves (the y=0 line is added last)
     drawn = ax.lines[:len(curves)]
     by_state = {}
     for curve, line in zip(curves, drawn):
@@ -669,9 +675,9 @@ def test_build_figure_multi_file_uses_linestyle_per_file(tmp_path):
         by_state.setdefault(curve.state, []).append(line)
     for state, lines in by_state.items():
         assert len(lines) == 2
-        # 线型按文件：同一个态的两个文件线型必须不同
+        # linestyle is per file: the two files must differ for the same state
         assert lines[0].get_linestyle() != lines[1].get_linestyle()
-        # 颜色按态：同一个态在两个文件里颜色相同
+        # colour is per state: the same state has the same colour in both files
         assert lines[0].get_color() == lines[1].get_color()
 
 
@@ -682,14 +688,14 @@ def test_build_figure_core_gets_its_own_palette(tmp_path):
     assert labels == ["1S  —  core", "2S  —  valence"]
     colors = {line.get_label(): line.get_color() for line in ax.get_lines()
               if len(line.get_ydata()) == 10}
-    assert colors["1S"] == "#08306b"                      # 核 = 深蓝
-    assert colors["2S"] == "#cb181d"                      # 价 = 暖色
+    assert colors["1S"] == "#08306b"                      # core = dark blue
+    assert colors["2S"] == "#cb181d"                      # valence = warm shade
 
 
 def test_state_colors_all_share_one_palette_without_core():
     colors = state_colors(["1S", "2S", "3S"], ())
     assert colors == {"1S": "#1f77b4", "2S": "#ff7f0e", "3S": "#2ca02c"}
-    # 给了 core：核从蓝系取、其余从暖色取
+    # with core given: the core comes from the blue family, the rest from the warm one
     colors = state_colors(["4F", "7S"], ("4F",))
     assert colors["4F"] == "#08306b" and colors["7S"] == "#cb181d"
 
@@ -706,12 +712,15 @@ def test_build_figure_log_y_plots_abs_and_says_so(tmp_path):
 
 
 def test_build_figure_without_curves_is_an_error():
-    with pytest.raises(PlotError, match="没有可画的曲线"):
+    with pytest.raises(PlotError, match="no curves to draw"):
         build_figure([], spec_of())
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("ae_radial", False), ("r(Å)", False), ("径向波函数", True), ("", False),
+    ("ae_radial", False), ("r(Å)", False),
+    # a CJK sample the default matplotlib font cannot draw (kana, so this file
+    # itself holds no Chinese text)
+    ("でんきょくし", True), ("", False),
 ])
 def test_has_cjk(text, expected):
     assert has_cjk(text) is expected
@@ -720,22 +729,22 @@ def test_has_cjk(text, expected):
 def test_cjk_text_produces_a_warning(plotted):
     import warnings as _warnings
 
-    write_plot_json(plotted, figure={"title": "径向波函数",
+    write_plot_json(plotted, figure={"title": "でんきょくし",
                                      "fig_name": "t.png"})
     with _warnings.catch_warnings():
-        _warnings.simplefilter("ignore")          # matplotlib 会喊一堆缺字形
+        _warnings.simplefilter("ignore")          # matplotlib complains about missing glyphs
         result = plot(plotted / "plot.json")
-    assert any("方框" in w for w in result.warnings)
+    assert any("empty boxes" in w for w in result.warnings)
 
 
 # --------------------------------------------------------------------------
-# plot() 端到端
+# plot() end to end
 # --------------------------------------------------------------------------
 def test_plot_writes_png_next_to_plot_json(plotted):
     result = plot(plotted / "plot.json")
 
     assert result.written
-    assert result.out_file == plotted / "plot.png"           # 默认取 plot.json 的文件名
+    assert result.out_file == plotted / "plot.png"           # default: the plot.json name
     assert result.out_file.is_file()
     assert result.png_bytes > 1000
     assert result.n_curves == 2
@@ -780,7 +789,7 @@ def test_plot_warns_when_a_curve_is_fully_outside_ylim(tmp_path):
 
     result = plot(tmp_path / "plot.json")
 
-    assert any("整条都在范围外" in w for w in result.warnings)
+    assert any("lie entirely outside the range" in w for w in result.warnings)
 
 
 def test_plot_warns_when_state_sets_differ(tmp_path):
@@ -792,7 +801,7 @@ def test_plot_warns_when_state_sets_differ(tmp_path):
     result = plot(tmp_path / "plot.json")
 
     assert result.n_curves == 3
-    assert any("态不一致" in w for w in result.warnings)
+    assert any("differ from those of" in w for w in result.warnings)
 
 
 def test_plot_warns_when_grid_shorter_than_xlim(tmp_path):
@@ -801,11 +810,11 @@ def test_plot_warns_when_grid_shorter_than_xlim(tmp_path):
 
     result = plot(tmp_path / "plot.json")
 
-    assert any("网格只到" in w for w in result.warnings)
+    assert any("only reaches" in w for w in result.warnings)
 
 
 def test_plot_without_matplotlib_is_reported(tmp_path, monkeypatch, plotted):
-    """matplotlib 缺失时要给出能照做的提示，而不是 ImportError 回溯。"""
+    """A missing matplotlib must produce an actionable hint, not an ImportError traceback."""
     import builtins
     real_import = builtins.__import__
 
@@ -833,8 +842,9 @@ def test_cli_plot(plotted, capsys):
     assert code == 0
     assert (plotted / "ae_radial.png").is_file()
     out = capsys.readouterr().out
-    assert "由 ylabel" in out and "由 xlabel" in out
-    assert "已生成" in out
+    assert "inferred from ylabel 'rR(r)'" in out
+    assert "inferred from xlabel 'r(Å)'" in out
+    assert "generated  :" in out
 
 
 def test_cli_plot_dry_run(plotted, capsys):
@@ -842,7 +852,7 @@ def test_cli_plot_dry_run(plotted, capsys):
 
     assert cli.main(["plot", "-i", str(plotted / "plot.json"), "-n"]) == 0
     assert not (plotted / "x.png").exists()
-    assert "干跑" in capsys.readouterr().out
+    assert "dry run" in capsys.readouterr().out
 
 
 def test_cli_plot_bad_mode_is_a_user_error(tmp_path, capsys):
@@ -853,14 +863,14 @@ def test_cli_plot_bad_mode_is_a_user_error(tmp_path, capsys):
                     encoding="utf-8")
 
     assert cli.main(["plot", "-i", str(path)]) == 2
-    assert "错误" in capsys.readouterr().err
+    assert "ppgen: error:" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------
-# 与真实 ld1.wfc / 你已有的分析结果对照
+# Comparison against a real ld1.wfc and an analysis result
 # --------------------------------------------------------------------------
 def write_plot_json_here(directory: Path, wfc_path: Path) -> Path:
-    """在 ``directory`` 里写一个指向别处 wfc 的 plot.json。"""
+    """Write a plot.json in ``directory`` that points at a wfc file elsewhere."""
     path = directory / "plot.json"
     path.write_text(json.dumps({
         "mode": "wavefunction",
@@ -872,11 +882,13 @@ def write_plot_json_here(directory: Path, wfc_path: Path) -> Path:
 
 
 def test_plot_reference_wfc_against_earlier_analysis(tmp_path):
-    """拿参考 run 的 ld1.wfc 画一张，并与你早先导出的峰值表逐态对照。"""
+    """Plot the ld1.wfc of the reference run and compare every state against the peak table
+    stored beside it.
+    """
     wfc_path = REFERENCE_DIR / "ld1.wfc"
     csv_path = REFERENCE_DIR / "ae_radial_max_per_orbital.csv"
     if not (wfc_path.is_file() and csv_path.is_file()):
-        pytest.skip("参考产物不在")
+        pytest.skip("the reference products are not there")
 
     wfc = read_wfc(wfc_path)
     assert wfc.sorted_labels() == ("4F", "5D", "5F", "6S", "6P", "6D", "7S")
@@ -899,13 +911,13 @@ def test_plot_reference_wfc_against_earlier_analysis(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 真跑一遍 prepare -> run -> plot（slow）
+# Really run prepare -> run -> plot (slow)
 # --------------------------------------------------------------------------
 @pytest.mark.slow
 def test_full_chain_prepare_run_plot(tmp_path, monkeypatch):
     ld1 = Path(config.qe_binary(config.DEFAULT_QE_PATH))
     if not (ld1.is_file() and ld1.stat().st_mode & 0o111):
-        pytest.skip(f"本机没有 ld1.x：{ld1}")
+        pytest.skip(f"no ld1.x on this machine: {ld1}")
     monkeypatch.delenv(config.ENV_PARAMETERS, raising=False)
 
     from pp_gen.inputs.generation import prepare

@@ -1,22 +1,29 @@
-"""``report`` 的"为什么选这个 r_c"图。
+"""The "why this r_c" figure of ``report``.
 
-横轴是各个扫描点的 ``r_c``，纵轴是**决定排序的那个量**：
+The x axis holds the ``r_c`` of each scan point and the y axis holds **the
+quantity that decides the ordering**:
 
-* ``--pole``：纵轴 = **极点 ΔE 合计**（``parser.json`` 里 ``poles.pairs[].delta``
-  之和），并在 ``pole_threshold`` 处画一条容差线 —— 落在它下面才算"极点重合"；
-* ``--median`` / ``--average`` / ``--maximum`` / ``--minimum``：纵轴 =
-  ``|L_PS − L_AE|`` 的那个统计量。
+* ``--pole``: y axis = the **sum of pole ΔE** (the sum of ``delta`` over
+  ``poles.pairs[]`` in ``parser.json``), with a tolerance line at
+  ``pole_threshold`` -- only below it do the poles count as coinciding;
+* ``--median`` / ``--average`` / ``--maximum`` / ``--minimum``: y axis = that
+  statistic of ``|L_PS − L_AE|``.
 
-另一个量用淡灰线画在**右侧副轴**上作对照（``--pole`` 时是 ``|ΔL|`` 中位数，
-也就是 ΔE 一样时的次级判据；``--median`` 时是极点 ΔE）—— 一眼能看出"两个判据
-是不是选了同一个点"。选中的 ``r_c`` 用星号 + 竖虚线标出并写上数值；跑失败的
-点不画曲线，只把它们的 ``r_c`` 记在子图角落。
+The other quantity is drawn as a pale grey line on the **right hand twin axis**
+for comparison (for ``--pole`` that is the ``|ΔL|`` median, the second level
+criterion used when ΔE ties; for ``--median`` it is the pole ΔE) -- so it is
+immediately visible whether the two criteria pick the same point. The selected
+``r_c`` is marked with an asterisk and a vertical dashed line and labelled with
+its value; scan points that failed get no curve, only their ``r_c`` noted in a
+corner of the panel.
 
-分工与其它绘图模块一致：**这个模块只管画**（拿到
-:class:`DecisionPanel` 列表 + :class:`DecisionSpec`，返回
-``Figure`` / ``Axes``），从报告里挑数据、定轴标题在 :mod:`pp_gen.report`。
+The split of responsibilities matches the other plotting modules: **this module
+only draws** (it takes a list of :class:`DecisionPanel` plus a
+:class:`DecisionSpec` and returns ``Figure`` / ``Axes``), while picking the data
+out of the report and setting the axis labels belongs to :mod:`pp_gen.reporting`.
 
-图内文字一律英文：matplotlib 默认字体没有中日韩字形，中文会渲染成方框。
+All text inside the figure is English: the default matplotlib font has no CJK
+glyphs, so Chinese characters would be rendered as empty boxes.
 """
 from __future__ import annotations
 
@@ -30,59 +37,66 @@ from ..core.errors import PpGenError, PlotError
 from ..reporting.metrics import POLE_FALLBACK, OrbitalReport, _metric_of
 from ..scans import axis as scan_axis
 
-#: 副轴（对照量）的颜色 —— 淡，不与主轴抢眼
+#: color of the twin axis (the comparison quantity) -- pale, so it does not
+#: compete with the main axis
 SECONDARY_COLOR = "#9e9e9e"
-#: 选中点那条竖虚线与星号的颜色
+#: color of the vertical dashed line and asterisk marking the selected point
 BEST_COLOR = "#111111"
-#: 容差线的颜色（``--pole`` 的 ``pole_threshold``）
+#: color of the tolerance line (``pole_threshold`` of ``--pole``)
 THRESHOLD_COLOR = "#5a5a5a"
 
 
 @dataclass(frozen=True)
 class DecisionPoint:
-    """一个扫描点在"选择依据图"上的位置。"""
+    """Position of one scan point on the "selection rationale" figure."""
 
-    #: 扫描值（rc 扫描是 rcut，能量扫描是 ener）—— 横轴
+    #: scan value (rcut for an rc scan, ener for an energy scan) -- the x axis
     value: float
-    #: 决定排序的那个量：``--pole`` 是极点 ΔE 合计，否则是 ``|ΔL|`` 统计量。
-    #: ``inf`` 表示极点**配不上**（窗口里没有 AE 极点可配）—— 画在图顶并标 ∞。
+    #: the quantity that decides the ordering: the pole ΔE sum for ``--pole``,
+    #: otherwise a ``|ΔL|`` statistic. ``inf`` means the pole is **unmatched**
+    #: (no AE pole in the window to match) -- drawn at the top of the panel and
+    #: marked with ∞.
     primary: Optional[float] = None
-    #: 右侧副轴上的对照量：``--pole`` 是 ``|ΔL|`` 中位数，否则是极点 ΔE。
+    #: comparison quantity on the right hand twin axis: the ``|ΔL|`` median for
+    #: ``--pole``, otherwise the pole ΔE.
     secondary: Optional[float] = None
-    #: 极点是否重合（画成实心 / 空心标记）
+    #: whether the poles coincide (drawn as filled / hollow markers)
     coincide: Optional[bool] = None
 
 
 @dataclass(frozen=True)
 class DecisionPanel:
-    """一个轨道 = 一张子图。"""
+    """One orbital = one panel."""
 
     orbital: str
     channel: Optional[int] = None
     points: Tuple[DecisionPoint, ...] = ()
-    #: 报告选中的那个扫描值（用星号标出来）
+    #: the scan value chosen by the report (marked with an asterisk)
     best: Optional[float] = None
-    #: 不可用的扫描点的扫描值（只列出来，不画点）
+    #: scan values of unusable points (listed only, no marker is drawn)
     failed: Tuple[float, ...] = ()
-    #: 扫的是哪一列（横轴标题用）
+    #: which column was scanned (used for the x axis label)
     axis: object = None
 
 
 @dataclass(frozen=True)
 class DecisionSpec:
-    """这张图讲的是哪一次排序。"""
+    """Which ordering this figure is about."""
 
     metric: str = "median"
     scope: str = "scanned"
     xlabel: str = "r_c (bohr)"
-    #: 主轴（决定排序的量）与副轴（对照量）的标题，英文
+    #: labels of the main axis (the ordering quantity) and of the twin axis (the
+    #: comparison quantity), in English
     primary_label: str = "|ΔL|"
     secondary_label: str = ""
-    #: 极点容差：只有 ``--pole`` 才画这条线（它决定"算不算重合"）
+    #: pole tolerance: the line is drawn only for ``--pole`` (it decides "do the
+    #: poles coincide")
     threshold: Optional[float] = None
-    #: 主轴用对数（``|ΔL|`` 那种跨几个量级的量）；极点 ΔE 用线性（有 0）
+    #: log scale on the main axis (for quantities spanning orders of magnitude,
+    #: such as ``|ΔL|``); the pole ΔE stays linear (it can be 0)
     primary_log: bool = False
-    #: 副轴用对数
+    #: log scale on the twin axis
     secondary_log: bool = False
     title: str = ""
     dpi: int = 150
@@ -90,7 +104,7 @@ class DecisionSpec:
 
 
 def build_figure(panels: Sequence[DecisionPanel], spec: DecisionSpec):
-    """把每个轨道画成一张子图，返回 ``(Figure, [Axes])``。"""
+    """Draw one panel per orbital and return ``(Figure, [Axes])``."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -115,7 +129,8 @@ def build_figure(panels: Sequence[DecisionPanel], spec: DecisionSpec):
 
 def draw(panels: Sequence[DecisionPanel], spec: DecisionSpec, path: Path, *,
          write: bool = True) -> Optional[Path]:
-    """画一张"选择依据图"；``write=False`` 只算不落盘（返回 ``None``）。"""
+    """Draw one "selection rationale" figure; with ``write=False`` it only
+    computes and writes nothing (returns ``None``)."""
     if not panels:
         return None
     import matplotlib.pyplot as plt
@@ -129,11 +144,12 @@ def draw(panels: Sequence[DecisionPanel], spec: DecisionSpec, path: Path, *,
 
 
 # --------------------------------------------------------------------------
-# 画一张子图
+# Draw one panel
 # --------------------------------------------------------------------------
 def _draw_panel(ax, panel: DecisionPanel, spec: DecisionSpec, *, index: int,
                 count: int) -> None:
-    """一个轨道：主曲线（带标记）、选中点、容差线、右侧对照量、失败列表。"""
+    """One orbital: main curve (with markers), selected point, tolerance line,
+    right hand comparison quantity, failed list."""
     points = [item for item in panel.points if item.primary is not None]
     color = STATE_COLORS[(panel.channel or 0) % len(STATE_COLORS)]
     primary_is_delta = spec.metric == "pole"
@@ -145,7 +161,8 @@ def _draw_panel(ax, panel: DecisionPanel, spec: DecisionSpec, *, index: int,
         ax.plot([item.value for item in finite], [item.primary for item in finite],
                 "-", color=color, lw=1.6, alpha=0.75, zorder=2)
     if primary_is_delta:
-        # 极点 ΔE 的主曲线：实心＝重合、空心＝不重合（这正是排序的第一级判据）
+        # main curve of the pole ΔE: filled = coincide, hollow = do not coincide
+        # (this is the first level ordering criterion)
         _markers(ax, finite, color=color, size=6.0)
     else:
         ax.plot([item.value for item in finite], [item.primary for item in finite],
@@ -167,7 +184,8 @@ def _draw_panel(ax, panel: DecisionPanel, spec: DecisionSpec, *, index: int,
     twin = (_secondary_axis(ax, points, spec, index=index)
             if spec.secondary_label else None)
     if spec.threshold is not None:
-        # 容差线画在**极点 ΔE 那条轴**上：`--pole` 时它就是主轴，否则在副轴上
+        # the tolerance line is drawn on the **pole ΔE axis**: that is the main
+        # axis for `--pole` and the twin axis otherwise
         target = ax if primary_is_delta else twin
         if target is not None:
             _threshold_line(target, spec.threshold, _finite_values(
@@ -192,10 +210,11 @@ def _draw_panel(ax, panel: DecisionPanel, spec: DecisionSpec, *, index: int,
 
 def _markers(ax, points, *, color: str, size: float,
              field: str = "primary") -> None:
-    """ΔE 曲线的标记：极点重合的实心、不重合的空心。
+    """Markers of the ΔE curve: filled when the poles coincide, hollow when not.
 
-    ``field`` 说明这条线画在哪个轴上 —— 主轴（``--pole``）是 ``primary``，
-    副轴（``--median`` 之类）是 ``secondary``，否则标记会落在错的高度上。
+    ``field`` says which axis that curve belongs to -- the main axis
+    (``--pole``) uses ``primary``, the twin axis (``--median`` and friends) uses
+    ``secondary``; otherwise the markers would sit at the wrong height.
     """
     coincide = [item for item in points if item.coincide is not False]
     apart = [item for item in points if item.coincide is False]
@@ -211,10 +230,11 @@ def _markers(ax, points, *, color: str, size: float,
 
 
 def _threshold_line(ax, threshold: float, values) -> None:
-    """``pole_threshold``：在这条线下面才算"极点重合"。
+    """``pole_threshold``: only below this line do the poles count as coinciding.
 
-    顺带把纵轴撑开到能看见这条线（6D 那种所有 ΔE 都等于阈值的面板，不撑开
-    线就贴着边框了）。
+    The y axis is opened up at the same time so the line stays visible (in a
+    panel such as 6D, where every ΔE equals the threshold, it would otherwise
+    sit right on the frame).
     """
     ax.axhline(threshold, color=THRESHOLD_COLOR, ls=(0, (3, 2)), lw=1.0,
                zorder=1)
@@ -230,13 +250,14 @@ def _threshold_line(ax, threshold: float, values) -> None:
 
 
 def _finite_values(points, field: str) -> List[float]:
-    """某一列（``primary`` / ``secondary``）里有限的那些值。"""
+    """The finite values of one column (``primary`` / ``secondary``)."""
     return [float(getattr(item, field)) for item in points
             if _finite(getattr(item, field))]
 
 
 def _secondary_axis(ax, points, spec: DecisionSpec, *, index: int):
-    """右侧副轴：另一个判据（对照用，画淡一点）。没有数据就返回 ``None``。"""
+    """Right hand twin axis: the other criterion (for comparison, drawn pale).
+    Returns ``None`` when there is no data."""
     usable = [item for item in points if _finite(item.secondary)]
     if not usable:
         return None
@@ -244,7 +265,7 @@ def _secondary_axis(ax, points, spec: DecisionSpec, *, index: int):
     twin.plot([item.value for item in usable],
               [item.secondary for item in usable], "-", color=SECONDARY_COLOR,
               lw=1.1, alpha=0.9, zorder=1)
-    if spec.metric != "pole":               # 副轴是 ΔE：实心 / 空心表示重合
+    if spec.metric != "pole":               # twin axis holds ΔE: filled / hollow marks coincidence
         _markers(twin, usable, color=SECONDARY_COLOR, size=3.6,
                  field="secondary")
         twin.set_zorder(ax.get_zorder() - 1)
@@ -263,7 +284,7 @@ def _secondary_axis(ax, points, spec: DecisionSpec, *, index: int):
 
 
 def _best_marker(ax, panel: DecisionPanel, points, *, color: str) -> None:
-    """选中的那个 ``r_c``：竖虚线 + 星号 + 数值。"""
+    """The selected ``r_c``: vertical dashed line + asterisk + value."""
     if panel.best is None:
         return
     ax.axvline(panel.best, color=BEST_COLOR, ls=(0, (4, 3)), lw=1.1,
@@ -281,7 +302,7 @@ def _best_marker(ax, panel: DecisionPanel, points, *, color: str) -> None:
 
 
 def _figure_legend(fig, spec: DecisionSpec) -> None:
-    """图例放在图上方（每个子图都放一份太挤）。"""
+    """The legend sits above the figure (one copy per panel would be too crowded)."""
     from matplotlib.lines import Line2D
 
     handles = [Line2D([], [], color="#1f77b4", lw=1.6, marker="o", ms=5,
@@ -305,17 +326,21 @@ def _finite(value: Optional[float]) -> bool:
 
 
 # --------------------------------------------------------------------------
-# "为什么选这个 r_c"那张图
+# The "why this r_c" figure
 # --------------------------------------------------------------------------
 def decision_panels(orbitals: Sequence[OrbitalReport], *, metric: str,
                     scope: str) -> List[object]:
-    """把报告结果整理成"选择依据图"的输入（每个轨道一张子图）。
+    """Turn the report results into the input of the "selection rationale"
+    figure (one panel per orbital).
 
-    * **主轴** = 决定排序的那个量：``--pole`` 是极点 ΔE 合计，否则是 ``|ΔL|``
-      的那个统计量；
-    * **副轴** = 另一个量（``--pole`` 时是 ``|ΔL|`` 中位数，也就是次级判据）；
-    * ``coincide`` 跟着 ΔE 走 —— 图上实心＝重合、空心＝不重合；
-    * 跑失败（或算不出排序量）的点不进曲线，只把它们的 ``r_c`` 记在子图角落。
+    * **main axis** = the quantity that decides the ordering: the pole ΔE sum
+      for ``--pole``, otherwise that statistic of ``|ΔL|``;
+    * **twin axis** = the other quantity (the ``|ΔL|`` median for ``--pole``,
+      i.e. the second level criterion);
+    * ``coincide`` follows ΔE -- filled on the figure means coincide, hollow
+      means it does not;
+    * points that failed (or whose ordering quantity cannot be computed) get no
+      curve, only their ``r_c`` noted in a corner of the panel.
     """
 
     panels: List[object] = []
@@ -355,7 +380,8 @@ def decision_panels(orbitals: Sequence[OrbitalReport], *, metric: str,
 def decision_spec(metric: str, scope: str,
                   threshold: Optional[float],
                   axis_key: object = None) -> object:
-    """这张图的轴标题与标题（**英文**：matplotlib 默认字体没有中文字形）。"""
+    """Axis labels and title of this figure (**English**: the default matplotlib
+    font has no CJK glyphs)."""
 
     axis = scan_axis.axis_of(getattr(axis_key, "key", axis_key)) \
         if axis_key is not None else scan_axis.RCUT_AXIS
@@ -373,20 +399,21 @@ def decision_spec(metric: str, scope: str,
         metric=metric, scope=scope, xlabel=xlabel,
         primary_label=f"|ΔL| {metric}",
         secondary_label="pole ΔE (Ry)",
-        # 容差线照画 —— 这时它落在**副轴**（极点 ΔE）上，一眼看出
-        # "中位数虽然最小、但极点已经出了容差"
+        # the tolerance line is drawn as usual -- here it lands on the **twin
+        # axis** (pole ΔE), showing at a glance that "the median is smallest,
+        # but the poles are already out of tolerance"
         threshold=threshold, primary_log=True, secondary_log=False,
         title=(f"why this {axis.key}: |ΔL| {metric} vs {axis.key}"
                f"  (--{metric}, scope={scope})"))
 
 
 def decision_name(metric: str) -> str:
-    """这张图叫什么（与 ``report.md`` 同目录）。"""
+    """Name of this figure (written next to ``report.md``)."""
     return f"report_{metric}.png"
 
 
 def _all_positive(values: Sequence[Optional[float]]) -> bool:
-    """对数轴只有在**全部**取值都为正时才用得上（``|ΔL|`` 可能是 0）。"""
+    """A log axis is only usable when **every** value is positive (``|ΔL|`` can be 0)."""
     seen = False
     for value in values:
         if value is None:
@@ -400,12 +427,13 @@ def _all_positive(values: Sequence[Optional[float]]) -> bool:
 def _draw_decision(orbitals: Sequence[OrbitalReport], *, metric: str,
                    scope: str, threshold: Optional[float], outdir: Path,
                    write: bool, warnings: List[str]) -> Optional[Path]:
-    """画"为什么选这个 r_c"那张图；画不出来只记一条提醒。"""
+    """Draw the "why this r_c" figure; when it cannot be drawn, record one warning."""
 
     panels = decision_panels(orbitals, metric=metric, scope=scope)
     spec = decision_spec(metric, scope, threshold,
                          axis_key=(orbitals[0].axis if orbitals else None))
-    # 对数轴得看数据：`|ΔL|` 或中位数可能是 0，那就只能用线性轴
+    # the log axis depends on the data: `|ΔL|` or the median can be 0, in which
+    # case a linear axis is the only option
     spec = replace(spec, primary_log=spec.primary_log and _all_positive(
         [item.primary for panel in panels for item in panel.points]))
     spec = replace(spec, secondary_log=spec.secondary_log and _all_positive(
@@ -413,9 +441,9 @@ def _draw_decision(orbitals: Sequence[OrbitalReport], *, metric: str,
     path = Path(outdir) / decision_name(metric)
     try:
         return draw(panels, spec, path, write=write)
-    except ImportError as exc:                     # 没装 matplotlib
-        warnings.append(f"没画'选择依据图'（{exc}）；装 plot 额外依赖即可："
-                        f"pip install 'pp-gen[plot]'")
+    except ImportError as exc:                     # matplotlib is not installed
+        warnings.append(f"the 'selection rationale' figure was not drawn ({exc}); "
+                        f"install the plot extras: pip install 'pp-gen[plot]'")
     except PpGenError as exc:
-        warnings.append(f"'选择依据图'没画成：{exc}")
+        warnings.append(f"the 'selection rationale' figure was not drawn: {exc}")
     return None

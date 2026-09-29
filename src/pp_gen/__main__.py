@@ -1,4 +1,4 @@
-"""``python -m pp_gen`` 入口（没装 console script 时也能跑）。"""
+"""``python -m pp_gen`` entry point, for use without the console script."""
 from __future__ import annotations
 
 import sys

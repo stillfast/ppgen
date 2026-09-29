@@ -1,0 +1,63 @@
+# U，**14 价电子**（5f3 6s2 6p6 6d1 7s2）+ pseudotype=2（多投影子 / 可分离形式）
+#
+# 为什么是 14 价电子 + pseudotype=2：
+#   * 6s2 要走"价电子"这条路（笔记 §1.2.1 的 rc 表 5 行、§1.2.8 的 δ 组态都带 6s2），
+#     而 6s/7s 是**同一个 l** ⇒ pseudotype=1 直接报
+#     `Two wavefunctions for the same l`（ld1_readin.f90:436），只有 pseudotype=2
+#     能同时给 l=0 两个投影算子。
+#   * zval 由 `Z − Σ占据(config) + Σ占据(configts(1))` 自动得出 = 14（config 写全 92 电子、
+#     configts(1) 14 个电子）⇒ 卡片占据数之和必须也是 14，这里 2+2+6+1+3 = 14 ✓
+#
+# 初值取 bcc-uranium-赝势和轨道生成-v12.md §1.2.1：AE 径向波外峰
+#   6S 1.3474 → 1.3 | 7S 1.1773 → 1.2 | 6P 1.6132 → 1.6 | 6D 2.4066 → 2.4 | 5F 1.0599 → 1.1
+# 再由 rc_scan 在 ±0.5 bohr 内按「极点 ΔE 合计 → |ΔL| 中位数」逐个通道挑。
+#
+# rcloc = 2.5：投影算子 β 的**截断半径由 rcloc 决定，不是由 rcut 决定**
+#   （实测 rcloc 2.5 → β 止于 2.50 bohr = 1.32 Å；2.7 → 1.43 Å；2.0 → 1.06 Å）
+#   ⇒ 要满足笔记 §1.2.5「β 在 1.5 Å 后为 0」，rcloc 取 ≤ ~2.8 bohr 即可 ✓
+#
+# nld = 6（≥ lmax+1 = 4）：dlog 文件有 nld 列（l=0…5），l=4/5 没有投影算子 ⇒ 纯测局域势。
+#   注意：nld 与卡片数量**无关**；同一批扫描要保持 nld 固定，否则池化统计不可比。
+#
+# 这份模板**故意只放 5 张卡**（每个通道一张），这样 rc_scan 逐个通道写回 rcut 不会歧义；
+# 最终要加"l=1 的第二个投影算子"（occ=0 的参考态）时，见 rc_scan_14e_pp.yml。
+
+input:
+  title: 'U 14 valence electrons (5f3 6s2 6p6 6d1 7s2) scalar-relativistic NC, PBE'
+  atom: 'U'
+  dft: 'PBE'
+  config: '[Rn] 5f3 6d1 7s2'
+  rel: 1
+  iswitch: 3
+  nld: 6
+  rlderiv: 5.0
+  eminld: -3.0
+  emaxld: 3.0
+  deld: 0.02
+
+inputp:
+  pseudotype: 2
+  file_pseudopw: 'U.pbe-n-nc.UPF'
+  author: 'Guozhou Li'
+  lloc: -2
+  rcloc: 2.5
+  nlcc: true
+  tm: true
+  new_core_ps: true
+  file_beta: 'U.beta'
+
+n_orbitals: 5
+orbitals:
+  - ['6S', 1, 0, 2.00, 0.00, 1.5, 1.5, 0.0]
+  - ['7S', 2, 0, 2.00, 0.00, 1.2, 1.2, 0.0]
+  - ['6P', 2, 1, 6.00, 0.00, 1.2, 1.2, 0.0]
+  - ['6D', 3, 2, 1.00, 0.00, 2.4, 2.4, 0.0]
+  - ['5F', 4, 3, 3.00, 0.00, 1.3, 1.3, 0.0]
+
+test:
+  nconf: 1
+  'configts(1)': '5f3 6s2 6p6 6d1 7s2'
+  ecutmin: 20.0
+  ecutmax: 200.0
+  decut: 20.0
+  rm: 30.0

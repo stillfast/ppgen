@@ -1,0 +1,12 @@
+input:
+  title: 'U all-electron'
+  atom: 'U'
+  zed: 92
+  dft: 'PBE'
+  config: '[Rn] 5f3 6d1 7s2'
+  rel: 1
+  iswitch: 1
+  max_out_wfc: 7
+  xmin: -8.0
+  dx: 0.005
+  rmax: 100

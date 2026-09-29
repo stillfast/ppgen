@@ -1,0 +1,40 @@
+input:
+  title: 'U 14 valence electrons (5f3 6s2 6p6 6d1 7s2) scalar-relativistic NC, PBE'
+  atom: 'U'
+  dft: 'PBE'
+  config: '[Rn] 5f3 6d1 7s2'
+  rel: 1
+  iswitch: 3
+  nld: 4
+  rlderiv: 5.0
+  eminld: -3.0
+  emaxld: 3.0
+  deld: 0.02
+
+inputp:
+  pseudotype: 2
+  file_pseudopw: 'U.pbe-n-nc.UPF'
+  author: 'Guozhou Li'
+  lloc: -2
+  rcloc: 2.2
+  nlcc: true
+  tm: true
+  new_core_ps: true
+  file_beta: 'U.beta'
+
+n_orbitals: 6
+orbitals:
+  - ['6S', 1, 0, 2.0, 0.0, 1.75, 1.75, 0.0]
+  - ['7S', 2, 0, 2.0, 0.0, 1.2, 1.2, 0.0]
+  - ['6P', 2, 1, 6.0, 0.0, 1.4, 1.4, 0.0]
+  - ['6D', 3, 2, 1.0, 0.0, 2.35, 2.35, 0.0]
+  - ['5F', 4, 3, 3.0, 0.0, 1.2, 1.2, 0.0]
+  - ['6P', 2, 1, 0.0, -0.50, 1.4, 1.4, 0.0]
+
+test:
+  nconf: 1
+  'configts(1)': '5f3 6s2 6p6 6d1 7s2'
+  ecutmin: 20.0
+  ecutmax: 200.0
+  decut: 20.0
+  rm: 30.0

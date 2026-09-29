@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pp-gen"
+version = "0.1.0"
+description = "赝势生成流水线（已实现：prepare / run / plot）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["PyYAML>=5.4", "numpy>=1.20"]
+
+[project.optional-dependencies]
+# plot 需要 matplotlib；cli 里懒导入，所以没装它也能用 prepare / run
+plot = ["matplotlib>=3.5"]
+dev = ["pytest>=7.0", "matplotlib>=3.5"]
+
+[project.scripts]
+ppgen = "pp_gen.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pp_gen*"]
+
+[tool.setuptools.package-data]
+"pp_gen.parameters" = ["*.yml", "input/*.yml"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: 真正调用本机 ld1.x 的集成测试（pytest -m 'not slow' 可跳过）",
+]

@@ -1,0 +1,39 @@
+input:
+  title: 'U 14 valence electrons (5f3 6s2 6p6 6d1 7s2) scalar-relativistic NC, PBE'
+  atom: 'U'
+  dft: 'PBE'
+  config: '[Rn] 5f3 6d1 7s2'
+  rel: 1
+  iswitch: 2
+  nld: 4
+  rlderiv: 3.0
+  eminld: -3.0
+  emaxld: 3.0
+  deld: 0.02
+
+test:
+  nconf: 5
+  'configts(1)': '5f3 6p6 6d1 7s2'
+  'configts(2)': '5f3 6p6 6d0 7s2'
+  'configts(3)': '5f3 6p6 6d1 7s1'
+  'configts(4)': '5f3 6p6 6d2 7s1'
+  'configts(5)': '5f3 6p6 6d2 7s0'
+  # 要测的那份 PP（rc_scan_type1.yml 那套 pseudotype=1 / 4 卡片生成出来的）。
+  #
+  # ⚠ 先说清楚：**这份 UPF 用 iswitch=2 测不出有意义的 δ** —— QE 文档里
+  #   pseudotype=1 是"semilocal form, single projector"，写出来的 UPF 在
+  #   iswitch=2 这条（分离式）路径上读进来，PS 侧会退化成"自由原子"：
+  #     实测 5F AE -0.24562 / PS -0.00191、6P -1.70801 / -0.33402、
+  #     Ekin(PS) = -9.67 Ry（负动能 = 没有势）。
+  #   → 这样跑出来的 δ 会像 3428 / 15419 mRy 那种，不是转移性差，是测法不成立。
+  #
+  # 想要有意义的 δ：把这份 PP 用 **pseudotype=2** 重新生成（rc_scan_type1.yml 里
+  # 把 pseudotype 改成 2，并且**补上 6S 卡片** —— 4 卡片 + pseudotype=2 会直接
+  # 报 Errors in PS-KS equation），再把下面这行换成新生成的 UPF。
+  # 参考：pseudotype=2 的那套（uranium-ppgen/best/U.pbe-n-nc.UPF）跑这 5 个组态
+  # 是 δ = -0.29 / -0.58 / -0.51 / -1.10 mRy。
+  file_pseudo: '/home/liguozhou/oncv/uranium-ppgen/past/best/U.pbe-n-nc.UPF'
+  ecutmin: 20.0
+  ecutmax: 200.0
+  decut: 20.0
+  rm: 30.0

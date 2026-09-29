@@ -1,0 +1,34 @@
+# U 14 价电子赝势的**迁移性（δ）测试**：iswitch=2，一次跑 5 个组态，
+# 组态 1 是生成时的组态（5f3 6s2 6p6 6d1 7s2，14 个电子），2..5 是另外四种占据，
+# 报告给出每个组态的 AE/PS 总能量差 ΔE 与 δ = ΔE_PS − ΔE_AE（mRy）。
+#
+# 关键点：**每个测试组态里的态都必须在赝势里有对应通道**（这里 6s/6p/6d/7s/5f 五个通道齐）
+# —— 否则 PS 侧是在"别人的通道"里解那个态，得到的是伪误差（例：只有 7S 通道时
+# 测试组态里带 6s2，6S 会差 37 mRy，而那是假象）。
+#
+# file_pseudo 指向被测的 UPF（本文件默认指向 v13 流水线生成的那份）。
+input:
+  title: 'U 14 valence electrons (5f3 6s2 6p6 6d1 7s2) scalar-relativistic NC, PBE'
+  atom: 'U'
+  dft: 'PBE'
+  config: '[Rn] 5f3 6d1 7s2'
+  rel: 1
+  iswitch: 2
+  nld: 4
+  rlderiv: 3.0
+  eminld: -3.0
+  emaxld: 3.0
+  deld: 0.02
+
+test:
+  nconf: 5
+  'configts(1)': '5f3 6s2 6p6 6d1 7s2'
+  'configts(2)': '5f3 6s2 6p6 6d0 7s2'
+  'configts(3)': '5f3 6s2 6p6 6d1 7s1'
+  'configts(4)': '5f3 6s2 6p6 6d2 7s1'
+  'configts(5)': '5f3 6s2 6p6 6d2 7s0'
+  file_pseudo: '/home/liguozhou/oncv/uranium-ppgen/v13/pp/U.pbe-n-nc.UPF'
+  ecutmin: 20.0
+  ecutmax: 200.0
+  decut: 20.0
+  rm: 30.0

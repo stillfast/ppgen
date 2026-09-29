@@ -1,0 +1,93 @@
+# U，**12 价电子**（5f3 6p6 6d1 7s2）+ pseudotype=1（单投影子、半局域）
+#
+# ✅ 2026-09-28 实测**能跑通**（QE 7.4）。判据（不要只看退出码）：
+#       valence charge is 12.00
+#       自检表  eps = 6.2E-16   iter = 6
+#       7S −0.00001 / 6P 0.00001 / 6D −0.00000 / 5F −0.00018 Ry   ← 四态全 ≤0.2 mRy，无 `!`
+#
+# ⚠ 唯一的关键点（之前一直卡住的坑）：**生成 12 价电子 + pseudotype=1 时不要写 `&test` 段。**
+#
+#   只要在 `&test` 里写了 `configts(1)`（例如 '5f3 6p6 6d1 7s2'），QE 的**内部自检**必崩：
+#       Warning: n=2, l=1 expected 0 nodes, found 1
+#       Error in routine run_pseudo (1): Errors in PS-KS equation
+#   机制（源码可查）：
+#     * 自检里的 PS-KS 方程由 ascheqps 解，它按 `ndcr = nam − l − 1` 判断"该通道应有几个节点"
+#       （ascheqps.f90:108）。
+#     * **卡片 n 列是"赝波函数节点约定"**（本模板 7S→2 / 6P→2 / 6D→3 / 5F→4，期望 1/0/0/0 个节点，
+#       与实际解一致）；**configts 字符串里的 n 是真实主量子数**（5/6/6/7）→ 两者对不上 →
+#       求解器以为本征值找错了，来回夹逼 100 次不收敛 → `nstop=1`（ascheqps.f90:267）→
+#       `run_pseudo.f90:148`：`nerr /= 0` 且 `iswitch == 3` 时直接 errore 退出
+#       （`iswitch == 2` 只会打印一行 BEWARE，所以别用 iswitch=2 的"没报错"当通过）。
+#     * 此刻**生成阶段早已 "End of pseudopotential generation"** —— 不是生成不出来，是自检配置写错。
+#       实测对照：同一份卡片去掉 `&test` 段 → 退出码 0、UPF 正常写出、自检 eps 6.2e-16 / iter 6。
+#     * `&test` 里 configts 也不能留空：QE 会去读第二段卡片 → read_psconfig 报错。
+#   → 所以本模板**不写 test 段**：自检自动复用与生成相同的卡片态，干净通过。
+#     要另做迁移性/对数导数检查，用 `test_configts`（iswitch=2）与 rlderiv / logfunction 那套。
+#
+# 顺带记两条判据：
+#   * `zval` 的读入检查（ld1_readin.f90:583-603）是
+#         zval == (Z − Σ占据(config)) + Σ占据(configts(1))
+#     config 写全 92 个电子时第一项为 0 → 给了 configts 时 zval 必须等于该字符串的电子数
+#     （12 vs 14 报 "supplied (12.00) and calculated (14.00)" 就是这么来的）。
+#     **卡片占据数不参与这个检查**，写错不会在读入时报，但会毁掉自检。
+#   * pseudotype=1 里同一 l 不许有两张卡片（QE 直接报 `Two wavefunctions for the same l`）
+#     —— 这就是"6s 想进芯、又想当通道"做不到的原因；要同时有 6s/7s 两个 s 通道只能 pseudotype=2。
+#   * 占据态（occ>0）的卡片不许写非零 ener，只有 occ=0 的卡能写。
+
+input:
+  title: 'U 12 valence electrons (5f3 6p6 6d1 7s2) scalar-relativistic NC, PBE, 6s2 in core'
+  atom: 'U'
+  dft: 'PBE'
+  # 写全 92 个电子：6s2 6p6 都在**芯**里（它们不出现在卡片上），价 = 5f3 6p6 6d1 7s2
+  config: '1s2 2s2 2p6 3s2 3p6 3d10 4s2 4p6 4d10 4f14 5s2 5p6 5d10 5f3 6s2 6p6 6d1 7s2'
+  rel: 1
+  iswitch: 3
+  nld: 4
+  rlderiv: 5.0
+  eminld: -3.0
+  emaxld: 3.0
+  deld: 0.02
+
+inputp:
+  pseudotype: 1
+  file_pseudopw: 'U.pbe-n-nc.UPF'
+  author: 'Guozhou Li'
+  lloc: -2
+  rcloc: 2.7
+  nlcc: true
+  tm: true
+  new_core_ps: true
+  file_beta: 'U.beta'
+  zval: 12           # = 卡片占据数之和 = 6p6 + 6d1 + 7s2 + 5f3
+
+n_orbitals: 4
+orbitals:
+  - ['7S', 2, 0, 2.00, 0.00, 1.4, 1.4, 0.0]
+  - ['6P', 2, 1, 6.00, 0.00, 1.75, 1.75, 0.0]
+  - ['6D', 3, 2, 1.00, 0.00, 2.35, 2.35, 0.0]
+  - ['5F', 4, 3, 3.00, 0.00, 1.15, 1.15, 0.0]
+
+# 故意不给 test 段（原因见文件头）。要恢复 QE 的 Bessel 盒子测试，就得写
+# configts(1)，而那正是上面那个崩溃的触发条件 —— 二选一。
+
+# ---------------------------------------------------------------------------
+# 14 价电子备选（同一份 pseudotype=1 也能跑，但 6S 通道会差 37 mRy）：
+#
+# input:
+#   title: 'U 14 valence electrons (5f3 6s2 6p6 6d1 7s2) scalar-relativistic NC, PBE'
+#   config: '1s2 … 5d10 5f3 6s2 6p6 6d1 7s2'      （其余 &input 同上）
+# inputp:
+#   同上传参，但要 **去掉 zval**（让 QE 自己按 (Z−Σconfig)+Σ卡片 算出 14）
+# n_orbitals: 5
+# orbitals:
+#   - ['6S', 1, 0, 2.00, 0.00, 1.40, 1.40, 0.0]
+#   - ['7S', 2, 0, 2.00, 0.00, 1.40, 1.40, 0.0]
+#   - ['6P', 2, 1, 6.00, 0.00, 1.75, 1.75, 0.0]
+#   - ['6D', 3, 2, 1.00, 0.00, 2.35, 2.35, 0.0]
+#   - ['5F', 4, 3, 3.00, 0.00, 1.15, 1.15, 0.0]
+#
+# 实测：退出码 0、valence charge 14、eps ~1e-15 / iter ≈ 16，
+# 五态 Δ = 5F 0.18 / 6S 37 / 6P 0.01 / 6D 0.00 / 7S 0.01 mRy（6S 被 QE 打了 `!`）。
+# 6s 想当一个**独立通道**且精度好，目前只有 pseudotype=2（6S+7S 双投影）那套：
+# 6S 0.05 mRy、δ ≈ 1 mRy。
+# ---------------------------------------------------------------------------

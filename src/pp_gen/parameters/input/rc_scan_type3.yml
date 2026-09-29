@@ -1,0 +1,44 @@
+input:
+  title: 'U 14 valence electrons (5f3 6s2 6p6 6d1 7s2) scalar-relativistic NC, PBE'
+  atom: 'U'
+  dft: 'PBE'
+  config: '[Rn] 5f3 6d1 7s2'
+  rel: 1
+  iswitch: 3
+  nld: 4
+  rlderiv: 4.1      # 对数导数的参考半径（a.u.）：4.1 = 2.17 Å，靠近 UO2 里 U–O 键中点
+                    # 原为 3.0；实测这样四个通道的 |ΔL| 中位都更低、极点差也更小，且无鬼态
+  eminld: -5.0
+  emaxld: 5.0
+  deld: 0.02
+
+inputp:
+  pseudotype: 3
+  file_pseudopw: 'U.pbe-n-nc.UPF'
+  author: 'Guozhou Li'
+  lloc: -2
+  rcloc: 2.0
+  nlcc: true
+  tm: true
+  new_core_ps: true
+
+n_orbitals: 7
+orbitals:
+  - ['6S', 1, 0, 2.00, 0.00, 1.2, 1.2, 0.0]
+  - ['7S', 2, 0, 2.00, 0.00, 1.2, 1.2, 0.0]
+  - ['6P', 2, 1, 6.00, 0.00, 1.8, 1.8, 0.0]
+  - ['6D', 3, 2, 1.00, 0.00, 2.4, 2.4, 0.0]
+  - ['5F', 4, 3, 3.00, 0.00, 1.2, 1.2, 0.0]
+  # 多投影子（pseudotype=3 才正确支持）：occupancy=0 + 指定 ener 就能为同一个 l
+  # 再挂一个投影算符 —— 位置/能量依赖都可调，实测把 l=2、l=3 的极点差从
+  # 0.14/0.04 压到 0.00，|ΔL| 中位从 4.0e-3/2.5e-3 降到 3.6e-4/7.0e-4
+  - ['6D', 3, 2, 0.00, -0.05, 2.4, 2.4, 0.0]
+  - ['5F', 4, 3, 0.00, -0.30, 1.2, 1.2, 0.0]
+
+test:
+  nconf: 1
+  'configts(1)': '5f3 6s2 6p6 6d1 7s2'
+  ecutmin: 20.0
+  ecutmax: 200.0
+  decut: 20.0
+  rm: 30.0

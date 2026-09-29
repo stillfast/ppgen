@@ -1,0 +1,4 @@
+{
+  "rc_range": [-0.5, 0.5, 0.1],
+  "update": {"criterion": "pole", "pole_threshold": 0.02}
+}

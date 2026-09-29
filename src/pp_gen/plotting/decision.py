@@ -21,11 +21,14 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from .builder import STATE_COLORS, save_figure
+from ..core.errors import PpGenError, PlotError
+from ..reporting.metrics import POLE_FALLBACK, OrbitalReport, _metric_of
+from ..scans import axis as scan_axis
 
 #: 副轴（对照量）的颜色 —— 淡，不与主轴抢眼
 SECONDARY_COLOR = "#9e9e9e"
@@ -299,3 +302,123 @@ def _figure_legend(fig, spec: DecisionSpec) -> None:
 
 def _finite(value: Optional[float]) -> bool:
     return value is not None and math.isfinite(float(value))
+
+
+# --------------------------------------------------------------------------
+# "为什么选这个 r_c"那张图
+# --------------------------------------------------------------------------
+def decision_panels(orbitals: Sequence[OrbitalReport], *, metric: str,
+                    scope: str) -> List[object]:
+    """把报告结果整理成"选择依据图"的输入（每个轨道一张子图）。
+
+    * **主轴** = 决定排序的那个量：``--pole`` 是极点 ΔE 合计，否则是 ``|ΔL|``
+      的那个统计量；
+    * **副轴** = 另一个量（``--pole`` 时是 ``|ΔL|`` 中位数，也就是次级判据）；
+    * ``coincide`` 跟着 ΔE 走 —— 图上实心＝重合、空心＝不重合；
+    * 跑失败（或算不出排序量）的点不进曲线，只把它们的 ``r_c`` 记在子图角落。
+    """
+    from ..plotting.decision import DecisionPanel, DecisionPoint
+
+    panels: List[object] = []
+    for item in orbitals:
+        points: List[object] = []
+        failed: List[float] = []
+        for point in item.points:
+            if point.value is None:
+                continue
+            if not point.ok:
+                failed.append(float(point.value))
+                continue
+            if metric == "pole":
+                primary = point.pole_delta
+                secondary = _metric_of(point, POLE_FALLBACK, scope)
+            else:
+                primary = _metric_of(point, metric, scope)
+                secondary = point.pole_delta
+            if primary is None:
+                failed.append(float(point.value))
+                continue
+            points.append(DecisionPoint(
+                value=float(point.value), primary=float(primary),
+                secondary=None if secondary is None else float(secondary),
+                coincide=point.pole_coincide))
+        points.sort(key=lambda item2: item2.value)
+        best = None
+        if item.best is not None and item.best.value is not None:
+            best = float(item.best.value)
+        panels.append(DecisionPanel(orbital=item.orbital, channel=item.channel,
+                                    points=tuple(points), best=best,
+                                    failed=tuple(sorted(failed)),
+                                    axis=item.axis))
+    return panels
+
+
+def decision_spec(metric: str, scope: str,
+                  threshold: Optional[float],
+                  axis_key: object = None) -> object:
+    """这张图的轴标题与标题（**英文**：matplotlib 默认字体没有中文字形）。"""
+    from ..plotting.decision import DecisionSpec
+
+    axis = scan_axis.axis_of(getattr(axis_key, "key", axis_key)) \
+        if axis_key is not None else scan_axis.RCUT_AXIS
+    xlabel = f"{axis.key} ({axis.unit})"
+    if metric == "pole":
+        return DecisionSpec(
+            metric=metric, scope=scope, xlabel=xlabel,
+            primary_label="pole ΔE (sum, Ry)",
+            secondary_label="|ΔL| median",
+            threshold=threshold, primary_log=False, secondary_log=True,
+            title=(f"why this {axis.key}: pole ΔE vs {axis.key}"
+                   f"  (--pole, scope={scope}; "
+                   "dashed line = pole_threshold)"))
+    return DecisionSpec(
+        metric=metric, scope=scope, xlabel=xlabel,
+        primary_label=f"|ΔL| {metric}",
+        secondary_label="pole ΔE (Ry)",
+        # 容差线照画 —— 这时它落在**副轴**（极点 ΔE）上，一眼看出
+        # "中位数虽然最小、但极点已经出了容差"
+        threshold=threshold, primary_log=True, secondary_log=False,
+        title=(f"why this {axis.key}: |ΔL| {metric} vs {axis.key}"
+               f"  (--{metric}, scope={scope})"))
+
+
+def decision_name(metric: str) -> str:
+    """这张图叫什么（与 ``report.md`` 同目录）。"""
+    return f"report_{metric}.png"
+
+
+def _all_positive(values: Sequence[Optional[float]]) -> bool:
+    """对数轴只有在**全部**取值都为正时才用得上（``|ΔL|`` 可能是 0）。"""
+    seen = False
+    for value in values:
+        if value is None:
+            continue
+        seen = True
+        if not float(value) > 0:
+            return False
+    return seen
+
+
+def _draw_decision(orbitals: Sequence[OrbitalReport], *, metric: str,
+                   scope: str, threshold: Optional[float], outdir: Path,
+                   write: bool, warnings: List[str]) -> Optional[Path]:
+    """画"为什么选这个 r_c"那张图；画不出来只记一条提醒。"""
+    from ..plotting.decision import draw
+
+    panels = decision_panels(orbitals, metric=metric, scope=scope)
+    spec = decision_spec(metric, scope, threshold,
+                         axis_key=(orbitals[0].axis if orbitals else None))
+    # 对数轴得看数据：`|ΔL|` 或中位数可能是 0，那就只能用线性轴
+    spec = replace(spec, primary_log=spec.primary_log and _all_positive(
+        [item.primary for panel in panels for item in panel.points]))
+    spec = replace(spec, secondary_log=spec.secondary_log and _all_positive(
+        [item.secondary for panel in panels for item in panel.points]))
+    path = Path(outdir) / decision_name(metric)
+    try:
+        return draw(panels, spec, path, write=write)
+    except ImportError as exc:                     # 没装 matplotlib
+        warnings.append(f"没画'选择依据图'（{exc}）；装 plot 额外依赖即可："
+                        f"pip install 'pp-gen[plot]'")
+    except PpGenError as exc:
+        warnings.append(f"'选择依据图'没画成：{exc}")
+    return None

@@ -520,7 +520,8 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 def _report_report(result) -> None:
     """报告命令的总结。"""
-    from ..reporting.report import METRIC_NAMES, POLE_FALLBACK, ConfigtsReport, format_pole_delta
+    from ..reporting.markdown import format_pole_delta
+    from ..reporting.metrics import METRIC_NAMES, POLE_FALLBACK, ConfigtsReport
 
     if isinstance(result, ConfigtsReport):
         _report_configts(result)

@@ -17,9 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from pp_gen import cli, config, scan, update
-from pp_gen.errors import ParameterError
-from pp_gen.runner import run
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.diagnostics import selection as update
+from pp_gen.scans import points as scan
+from pp_gen.core.errors import ParameterError
+from pp_gen.ld1.runner import run
+from pp_gen.scans import apply as apply
+from pp_gen.writing import cards as cards
 
 FAKE_LD1 = '''\
 #!/usr/bin/env python3
@@ -166,7 +171,7 @@ def test_update_flag_rejects_nonsense():
 
 def test_update_key_is_not_reported_as_ignored(scan_root, monkeypatch):
     """``update`` 是认得出来的键，不该报"已被忽略"。"""
-    from pp_gen import prepare as prepare_mod
+    from pp_gen.inputs import generation as prepare_mod
 
     result = prepare_mod.prepare(scan_root / "input.json", write_output=False)
 
@@ -184,7 +189,7 @@ def test_write_card_rcut_only_touches_that_line(tmp_path):
     path.write_text(CARDS_YML, encoding="utf-8")
     before = path.read_text(encoding="utf-8").splitlines()
 
-    assert scan.write_card_rcut(path, "5F", 1.0) is True
+    assert cards.write_card_rcut(path, "5F", 1.0) is True
 
     after = path.read_text(encoding="utf-8").splitlines()
     assert len(before) == len(after)
@@ -198,7 +203,7 @@ def test_write_card_rcut_only_touches_that_line(tmp_path):
 def test_write_card_rcut_moves_every_card_of_that_label(tmp_path):
     """多投影子：两张 5F 一起写回同一个 r_c，其它卡片与 ener 都不动。
 
-    扫描点（``scan.apply``）就是按标签联动的，写回必须一样 —— 否则 YAML 里
+    扫描点（``apply.apply``）就是按标签联动的，写回必须一样 —— 否则 YAML 里
     两张 5F 会一个 1.0 一个 1.1，而扫描中心取第一张、扫描点又把两张改成同值。
     """
     path = tmp_path / "cards.yml"
@@ -210,7 +215,7 @@ def test_write_card_rcut_moves_every_card_of_that_label(tmp_path):
     path.write_text(text, encoding="utf-8")
     before = text.splitlines()
 
-    assert scan.write_card_rcut(path, "5F", 1.0) is True
+    assert cards.write_card_rcut(path, "5F", 1.0) is True
 
     after = path.read_text(encoding="utf-8").splitlines()
     assert len(before) == len(after)
@@ -224,7 +229,7 @@ def test_write_card_rcut_moves_every_card_of_that_label(tmp_path):
     assert [line for line in after if "'6D'" in line] == \
         ["  - ['6D', 3, 2, 0.00, -0.05, 2.0, 2.0, 0.0]"]
     # 两张都一样了，再写一次就什么都不做
-    assert scan.write_card_rcut(path, "5F", 1.0) is False
+    assert cards.write_card_rcut(path, "5F", 1.0) is False
     assert path.read_text(encoding="utf-8").splitlines() == after
 
 
@@ -232,7 +237,7 @@ def test_write_card_rcut_is_a_noop_when_unchanged(tmp_path):
     path = tmp_path / "cards.yml"
     path.write_text(CARDS_YML, encoding="utf-8")
 
-    assert scan.write_card_rcut(path, "5F", 1.1) is False       # 已经是这个值
+    assert cards.write_card_rcut(path, "5F", 1.1) is False       # 已经是这个值
     assert path.read_text(encoding="utf-8") == CARDS_YML
 
 
@@ -242,7 +247,7 @@ def test_write_card_rcut_reports_a_missing_card(tmp_path):
                     encoding="utf-8")
 
     with pytest.raises(ParameterError, match="没有轨道 5F"):
-        scan.write_card_rcut(path, "5F", 1.0)
+        cards.write_card_rcut(path, "5F", 1.0)
 
 
 # --------------------------------------------------------------------------

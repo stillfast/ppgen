@@ -12,9 +12,11 @@ from pathlib import Path
 import pytest
 
 from conftest import write_input
-from pp_gen import cli, config, ld1_input, parameters, run_input, workflows
-from pp_gen.errors import InputError, ParameterError, RenderError
-from pp_gen.prepare import prepare
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.inputs import ld1_input_writer as ld1_input, parameter_files as parameters, request as run_input, workflows
+from pp_gen.core.errors import InputError, ParameterError, RenderError
+from pp_gen.inputs.generation import prepare
 
 REPO = Path(__file__).resolve().parent.parent
 PARAMETERS = REPO / "src" / "pp_gen" / "parameters"

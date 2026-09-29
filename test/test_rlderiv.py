@@ -15,10 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from pp_gen import cli, config, scan, update
-from pp_gen.errors import ParameterError
-from pp_gen.prepare import prepare
-from pp_gen.runner import output_json, run
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.diagnostics import selection as update
+from pp_gen.scans import points as scan
+from pp_gen.core.errors import ParameterError
+from pp_gen.inputs.generation import prepare
+from pp_gen.ld1.runner import output_json, run
+from pp_gen.scans import axis as axis
 
 #: 假 ld1.x：从 U.in 里读 rlderiv，按"离目标差多少"挪 PS 极点（四个通道一起）
 FAKE_LD1 = '''\
@@ -155,7 +159,7 @@ def test_namelist_center_reads_the_input_section():
 
 def test_points_and_directories():
     points = scan.namelist_points(5.0, [4.0, 8.0, 1.0], section="input",
-                                  key="rlderiv", axis=scan.RCLDERIV_AXIS)
+                                  key="rlderiv", axis=axis.RCLDERIV_AXIS)
 
     assert [point.value for point in points] == pytest.approx([4, 5, 6, 7, 8])
     assert [str(point.relative_dir) for point in points] == [
@@ -239,7 +243,7 @@ def test_range_is_required(tmp_path, monkeypatch):
 # 报告：每个 rlderiv 一行、每个 l 一列的中位数
 # --------------------------------------------------------------------------
 def test_report_lists_per_channel_medians(scan_root, tmp_path):
-    from pp_gen import report as report_mod
+    from pp_gen.reporting import report as report_mod
 
     batch = run(scan_root / "input.json")
     out = scan_root / "output.json"
@@ -281,10 +285,10 @@ def test_cli_prepare_lists_the_values(scan_root, capsys):
 
 
 def test_axis_is_looked_up_by_key():
-    assert scan.axis_of("rlderiv") is scan.RCLDERIV_AXIS
-    assert scan.namelist_scan("rlderiv")["section"] == "input"
+    assert axis.axis_of("rlderiv") is axis.RCLDERIV_AXIS
+    assert axis.namelist_scan("rlderiv")["section"] == "input"
     assert update.target_of(
         scan.namelist_points(5.0, [4.0, 8.0, 1.0], section="input",
                              key="rlderiv",
-                             axis=scan.RCLDERIV_AXIS)[0]).text() \
+                             axis=axis.RCLDERIV_AXIS)[0]).text() \
         == "rlderiv（&input 的 rlderiv）"

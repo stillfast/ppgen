@@ -17,12 +17,15 @@ from pathlib import Path
 import pytest
 
 from conftest import write_input
-from pp_gen import cli, config, scan
-from pp_gen.errors import InputError, ParameterError, RenderError
-from pp_gen.ld1_input import cards_of, render_cards, render_sections
-from pp_gen.parameters import section_order
-from pp_gen.prepare import prepare
-from pp_gen.runner import run, run_one
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.scans import points as scan
+from pp_gen.core.errors import InputError, ParameterError, RenderError
+from pp_gen.inputs.ld1_input_writer import cards_of, render_cards, render_sections
+from pp_gen.inputs.parameter_files import section_order
+from pp_gen.inputs.generation import prepare
+from pp_gen.ld1.runner import run, run_one
+from pp_gen.scans import apply as apply
 
 REPO = Path(__file__).resolve().parent.parent
 PARAMETERS = REPO / "src" / "pp_gen" / "parameters"
@@ -125,7 +128,7 @@ def test_apply_moves_every_card_of_that_label():
     point = scan.ScanPoint(orbital="5F", rcut=1.5, offset=0.2,
                            relative_dir=Path("runs/5F/rc_1p5"))
 
-    cards = scan.apply(sections, point)["orbitals"]
+    cards = apply.apply(sections, point)["orbitals"]
 
     assert [card[5] for card in cards] == [1.5, 2.0, 1.5]      # 两张 5F 都动
     assert cards[1][4] == -0.05 and cards[2][4] == -0.6        # ener 没碰
@@ -241,7 +244,7 @@ def test_apply_changes_only_the_scanned_orbital():
     point = scan.ScanPoint(orbital="5F", rcut=1.0, offset=0.0,
                            relative_dir=Path("runs/5F/rc_1p0"))
 
-    updated = scan.apply(sections, point)
+    updated = apply.apply(sections, point)
 
     assert updated["orbitals"][0][5] == 1.0            # rcut
     assert updated["orbitals"][0][6] == 1.0            # rcutus 一起改
@@ -253,7 +256,7 @@ def test_apply_rejects_unknown_orbital():
     point = scan.ScanPoint(orbital="9Z", rcut=1.0, offset=0.0,
                            relative_dir=Path("x"))
     with pytest.raises(ParameterError, match="不在 orbitals 卡片里"):
-        scan.apply({"orbitals": [["5F", 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]]}, point)
+        apply.apply({"orbitals": [["5F", 4, 3, 3.0, 0.0, 1.0, 1.0, 0.0]]}, point)
 
 
 def test_describe_and_summary_rows():
@@ -268,7 +271,7 @@ def test_describe_and_summary_rows():
 # 渲染 iswitch=3 的输入
 # --------------------------------------------------------------------------
 def _sections(tmp_path: Path) -> dict:
-    from pp_gen import parameters
+    from pp_gen.inputs import parameter_files as parameters
 
     (tmp_path / "parameters" / "input").mkdir(parents=True, exist_ok=True)
     (tmp_path / "parameters" / "input" / "rc_scan.yml").write_text(
@@ -672,8 +675,9 @@ def test_real_ld1x_produces_a_upf_for_one_scan_point(tmp_path, monkeypatch):
                 qe_path=config.DEFAULT_QE_PATH, workflow="rc_scan")
 
     # 中心值以**真实的参数文件**为准（那是会变的），别把数字写死在测试里
-    from pp_gen import parameters as parameters_mod
-    from pp_gen.scan import centers_from_cards, rc_label
+    from pp_gen.inputs import parameter_files as parameters_mod
+    from pp_gen.scans.axis import rc_label
+    from pp_gen.scans.points import centers_from_cards
 
     loaded = parameters_mod.load_set("input", "rc_scan", config.parameters_root())
     center = centers_from_cards(loaded.sections["orbitals"])["5F"]

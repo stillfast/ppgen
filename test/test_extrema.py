@@ -14,11 +14,10 @@ import pytest
 
 from conftest import curved_rows, write_plot_json, write_wfc
 from pp_gen import cli
-from pp_gen.errors import PlotError
-from pp_gen.extrema import (csv_rows, extrema, nodes, safe_label,
-                            state_extrema, write_csv)
-from pp_gen.plotter import plot
-from pp_gen.wfc import read_wfc, state_sort_key
+from pp_gen.core.errors import PlotError
+from pp_gen.ld1.extrema import csv_rows, extrema, nodes, safe_label, state_extrema, write_csv
+from pp_gen.plotting.dispatch import plot
+from pp_gen.ld1.wavefunctions import read_wfc, state_sort_key
 
 REFERENCE_DIR = (Path(__file__).resolve().parent.parent.parent / "ppgen"
                  / "script" / "runs" / "ae_radial")
@@ -60,7 +59,7 @@ def test_extrema_finds_max_min_in_r_order_and_numbers_them():
 
 
 def test_extrema_positions_are_converted_to_angstrom():
-    from pp_gen.config import BOHR_ANGSTROM
+    from pp_gen.core.settings import BOHR_ANGSTROM
     found = extrema(np.array([0.1, 0.2, 0.3]), np.array([0.0, 1.0, 0.0]))
     assert found[0].r_angstrom == pytest.approx(0.2 * BOHR_ANGSTROM)
 
@@ -211,7 +210,7 @@ def test_plot_csv_can_be_disabled(tmp_path):
 
 
 def test_plot_csv_rejects_directory_in_name(tmp_path):
-    from pp_gen.plot_spec import load as load_spec
+    from pp_gen.plotting.spec import load as load_spec
     write_wfc(tmp_path, ("2S", "1S"), curved_rows())
     path = write_plot_json(tmp_path, figure={"csv_name": "sub/e.csv"})
     with pytest.raises(PlotError, match="不能带目录"):

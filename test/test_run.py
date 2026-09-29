@@ -12,9 +12,10 @@ from pathlib import Path
 import pytest
 
 from conftest import write_input
-from pp_gen import cli, config
-from pp_gen.errors import RunError
-from pp_gen.runner import run, run_one
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.core.errors import RunError
+from pp_gen.ld1.runner import run, run_one
 
 FAKE_LD1 = """\
 #!/usr/bin/env bash
@@ -156,7 +157,7 @@ def test_run_generates_the_input_when_it_is_missing(fake_ld1, run_dir):
 def test_run_refuses_when_the_input_cannot_be_written(fake_ld1, run_dir,
                                                       monkeypatch):
     """生成阶段写不进去（这里用只读目录模拟）→ 明确报错，而不是静默跳过。"""
-    import pp_gen.prepare as prepare_mod
+    import pp_gen.inputs.generation as prepare_mod
 
     monkeypatch.setattr(prepare_mod, "_write",
                         lambda path, text: (False, False))
@@ -428,7 +429,7 @@ def test_cli_run_reports_the_output_json(fake_ld1, run_dir, capsys):
 # 直接跑：在当前目录跑 U.in，不读配置、不生成、不校验
 # --------------------------------------------------------------------------
 def test_classify_input_tells_config_from_direct(fake_ld1, run_dir, tmp_path):
-    from pp_gen.runner import classify_input
+    from pp_gen.ld1.runner import classify_input
 
     assert classify_input(run_dir / "input.json") == "config"
     (tmp_path / "U.in").write_text("&input\n/\n", encoding="utf-8")
@@ -441,7 +442,7 @@ def test_classify_input_tells_config_from_direct(fake_ld1, run_dir, tmp_path):
 
 
 def test_find_direct_input_prefers_U_in(fake_ld1, tmp_path, monkeypatch):
-    from pp_gen.runner import find_direct_input
+    from pp_gen.ld1.runner import find_direct_input
 
     (tmp_path / "U.in").write_text("&input\n/\n", encoding="utf-8")
     (tmp_path / "other.in").write_text("&input\n/\n", encoding="utf-8")
@@ -450,7 +451,7 @@ def test_find_direct_input_prefers_U_in(fake_ld1, tmp_path, monkeypatch):
 
 
 def test_find_direct_input_single_candidate(fake_ld1, tmp_path, monkeypatch):
-    from pp_gen.runner import find_direct_input
+    from pp_gen.ld1.runner import find_direct_input
 
     (tmp_path / "U14.in").write_text("&input\n/\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
@@ -458,7 +459,7 @@ def test_find_direct_input_single_candidate(fake_ld1, tmp_path, monkeypatch):
 
 
 def test_find_direct_input_rejects_ambiguity(fake_ld1, tmp_path, monkeypatch):
-    from pp_gen.runner import find_direct_input
+    from pp_gen.ld1.runner import find_direct_input
 
     for name in ("a.in", "b.in"):
         (tmp_path / name).write_text("&input\n/\n", encoding="utf-8")
@@ -468,7 +469,7 @@ def test_find_direct_input_rejects_ambiguity(fake_ld1, tmp_path, monkeypatch):
 
 
 def test_find_direct_input_without_any_in(fake_ld1, tmp_path, monkeypatch):
-    from pp_gen.runner import find_direct_input
+    from pp_gen.ld1.runner import find_direct_input
 
     monkeypatch.chdir(tmp_path)
     with pytest.raises(RunError, match="没有 U.in"):

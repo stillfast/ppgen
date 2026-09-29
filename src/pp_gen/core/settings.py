@@ -16,7 +16,9 @@ import os
 from pathlib import Path
 
 #: 本包的安装位置：``.../src/pp_gen``
-PACKAGE_ROOT = Path(__file__).resolve().parent
+MODULE_DIR = Path(__file__).resolve().parent
+#: the importable package root (``.../src/pp_gen``), not this subpackage
+PACKAGE_ROOT = MODULE_DIR.parent
 #: 项目根：``.../pp-gen``
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent
 

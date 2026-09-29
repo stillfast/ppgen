@@ -18,11 +18,12 @@ import pytest
 from conftest import (one_state_rows, sign_rows, write_dlog,
                       write_plot_json, write_wfc)
 from pp_gen import cli
-from pp_gen.dlog import (ChannelDiag, check_pair, compare, poles_of, read_dlog)
-from pp_gen.figure import Curve, EnergyMark, FigureSpec
-from pp_gen.errors import PlotError
-from pp_gen.plot_spec import load as load_spec
-from pp_gen.plotter import plot
+from pp_gen.ld1.log_derivatives import ChannelDiag, check_pair, compare, poles_of, read_dlog
+from pp_gen.plotting.builder import Curve, EnergyMark
+from pp_gen.plotting.spec import FigureSpec
+from pp_gen.core.errors import PlotError
+from pp_gen.plotting.spec import load as load_spec
+from pp_gen.plotting.dispatch import plot
 
 REAL_POINT = Path("/home/liguozhou/oncv/uranium-ppgen/rc_scan/runs/5F/rc_1p1")
 
@@ -461,8 +462,8 @@ def test_legend_only_carries_the_selected_statistics(dlog_dir):
 def test_figure_legend_shows_the_statistics(dlog_dir):
     """图例里每个通道带上误差统计（英文缩写，参考脚本也是写在图例里）。"""
     import matplotlib.pyplot as plt
-    from pp_gen.dlog import window_mask
-    from pp_gen.figure import build_figure
+    from pp_gen.ld1.log_derivatives import window_mask
+    from pp_gen.plotting.builder import build_figure
 
     spec = load_spec(write_log_plot_json(dlog_dir, figure={"xlim": [-3, 3]}))
     first = read_dlog(spec.data.wfcs[0])
@@ -485,7 +486,7 @@ def test_figure_legend_shows_the_statistics(dlog_dir):
 # --------------------------------------------------------------------------
 def test_pole_marks_come_from_the_diagnostics(tmp_path):
     """AE 极点在 -0.025、PS 在 0.075 -> 两条竖线，PS 那条带 ΔE。"""
-    from pp_gen.plotter import _pole_marks
+    from pp_gen.plotting.log_derivatives import _pole_marks
 
     write_dlog(tmp_path, "ae.dlog", sign_rows([0.0]))
     write_dlog(tmp_path, "ps.dlog", sign_rows([0.1]))
@@ -509,7 +510,7 @@ def test_unmatched_pole_pair_is_emphasized(tmp_path):
 
     这样图上"没对齐的那一对"是两根粗竖线，一眼能看出差在哪。
     """
-    from pp_gen.plotter import _pole_marks
+    from pp_gen.plotting.log_derivatives import _pole_marks
 
     write_dlog(tmp_path, "ae.dlog", sign_rows([0.0]))
     write_dlog(tmp_path, "ps.dlog", sign_rows([0.1]))
@@ -528,7 +529,7 @@ def test_unmatched_pole_pair_is_emphasized(tmp_path):
 
 
 def test_matched_poles_are_not_emphasized(tmp_path):
-    from pp_gen.plotter import _pole_marks
+    from pp_gen.plotting.log_derivatives import _pole_marks
 
     write_dlog(tmp_path, "ae.dlog", sign_rows([0.0]))
     write_dlog(tmp_path, "ps.dlog", sign_rows([0.0]))
@@ -544,7 +545,7 @@ def test_matched_poles_are_not_emphasized(tmp_path):
 
 def test_pole_lines_are_visible_not_hairline():
     """竖线要够粗、够实：早期 ``lw=1.0 / alpha=0.35`` 在图上几乎看不见。"""
-    from pp_gen.figure import POLE_ALPHA, POLE_STYLES, POLE_WIDTH
+    from pp_gen.plotting.builder import POLE_ALPHA, POLE_STYLES, POLE_WIDTH
 
     assert POLE_WIDTH[False] >= 1.3 and POLE_WIDTH[True] >= POLE_WIDTH[False]
     assert POLE_ALPHA[False] >= 0.8 and POLE_ALPHA[True] >= POLE_ALPHA[False]
@@ -553,7 +554,7 @@ def test_pole_lines_are_visible_not_hairline():
 
 def test_zero_marks_are_bottom_ticks(tmp_path):
     """``L(E)`` 的零点画成**贴底短刻度**（不像极点那样贯穿整幅）。"""
-    from pp_gen.figure import ZERO_TICK_HEIGHT, build_figure
+    from pp_gen.plotting.builder import ZERO_TICK_HEIGHT, build_figure
 
     x = np.linspace(-1.0, 1.0, 11)
     curves = [Curve(state="l=0", file_label="AE", file_index=0, x=x,
@@ -601,7 +602,7 @@ def test_pole_marks_are_off_unless_asked_for(tmp_path):
     ``mark_poles: true``"＝极点与零点都标，"再写 ``mark_zeros: false``"
     才只留极点。
     """
-    from pp_gen.plotter import _pole_marks
+    from pp_gen.plotting.log_derivatives import _pole_marks
 
     write_dlog(tmp_path, "ae.dlog", pole_and_zero_rows())
     write_dlog(tmp_path, "ps.dlog", pole_and_zero_rows())
@@ -646,7 +647,7 @@ def test_analysis_rejects_bad_mark_poles(dlog_dir):
 def test_build_figure_draws_pole_lines_labels_and_legend(tmp_path):
     """图上：每个极点一条竖线（AE 点线 / PS 虚线）、未配的写 ΔE、图例带说明。"""
     import matplotlib.pyplot as plt
-    from pp_gen.figure import PoleMark, build_figure
+    from pp_gen.plotting.builder import PoleMark, build_figure
 
     x = np.linspace(-1.0, 1.0, 11)
     curves = [Curve(state="l=0", file_label="AE", file_index=0, x=x, y=np.abs(x) + 1)]
@@ -698,9 +699,9 @@ def test_pole_delta_statistics_are_gone(dlog_dir, tmp_path, capsys):
     assert "|ΔL|" in out                                   # |ΔL| 的误差统计保留
 
     import matplotlib.pyplot as plt
-    from pp_gen.dlog import window_mask
-    from pp_gen.figure import build_figure
-    from pp_gen.plotter import _pole_marks
+    from pp_gen.ld1.log_derivatives import window_mask
+    from pp_gen.plotting.builder import build_figure
+    from pp_gen.plotting.log_derivatives import _pole_marks
 
     spec = load_spec(path)
     files = [read_dlog(p) for p in spec.data.wfcs]
@@ -810,7 +811,7 @@ def test_parser_json_pole_coincidence_and_deltas(tmp_path):
 
 def test_parser_json_no_features_is_coincident(tmp_path):
     """两边都没有极点（或都没有零点）算"重合"（空集确实重合）。"""
-    from pp_gen.dlog import feature_block
+    from pp_gen.ld1.log_derivatives import feature_block
 
     assert feature_block([], [], threshold=0.02)["coincide"] is True
     assert feature_block([], [1.0], threshold=0.02)["coincide"] is False
@@ -949,8 +950,8 @@ def test_plot_logfunction_writes_the_png(dlog_dir):
 
 def test_plot_logfunction_figure_axes(dlog_dir):
     import matplotlib.pyplot as plt
-    from pp_gen.dlog import window_mask
-    from pp_gen.figure import Curve, build_figure
+    from pp_gen.ld1.log_derivatives import window_mask
+    from pp_gen.plotting.builder import Curve, build_figure
 
     spec = load_spec(write_log_plot_json(dlog_dir, figure={
         "xlim": [-1, 1], "yscale": "log", "figsize": [6, 4]}))
@@ -1135,7 +1136,7 @@ def test_poles_of_falls_back_to_the_midpoint_when_one_side_is_small():
 
 def test_pair_tolerance_keeps_one_grid_cell():
     """极点位置的分辨率就是能量网格：判定容差 = 容差 + 一格。"""
-    from pp_gen.dlog import feature_block, pair_tolerance
+    from pp_gen.ld1.log_derivatives import feature_block, pair_tolerance
 
     assert pair_tolerance(0.02, 0.02) == pytest.approx(0.04)
     assert pair_tolerance(0.02) == pytest.approx(0.02)

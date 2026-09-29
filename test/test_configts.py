@@ -3,7 +3,7 @@
 要点：
 * 每个任务只换 ``&test`` 的 ``configts(1)``，并且**强制 iswitch=2 + 固定的
   file_pseudo**（iswitch=3 是"生成 + 测试"，测试组态一变 PS 总能就不可比 ——
-  实测差 1.6 Ry，见 scan.apply_config 的说明）；
+  实测差 1.6 Ry，见 apply.apply_config 的说明）；
 * 生成的输入里不能再有 ``&inputp`` 与通道卡片（iswitch=2 不该有）；
 * ``ppgen report -i output.json`` 一个输入就出版：每个组态一行 E_AE/E_PS/
   ΔE_AE/ΔE_PS/δ，外加逐组态能级表。
@@ -15,9 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from pp_gen import cli, config, scan
-from pp_gen.prepare import prepare
-from pp_gen.report import configts_report
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.scans import points as scan
+from pp_gen.inputs.generation import prepare
+from pp_gen.reporting.report import configts_report
+from pp_gen.scans import apply as apply
 
 CARDS_YML = """\
 input:

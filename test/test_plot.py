@@ -21,12 +21,13 @@ import pytest
 
 from conftest import (one_state_rows, simple_rows, write_input,
                       write_plot_json, write_wfc)
-from pp_gen import cli, config
-from pp_gen.errors import PlotError
-from pp_gen.figure import Curve, build_figure, has_cjk, state_colors
-from pp_gen.plot_spec import FigureSpec, infer_quantity, infer_x_unit, load as load_spec
-from pp_gen.plotter import plot
-from pp_gen.wfc import canon_quantity, read_wfc, state_sort_key, transform
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.core.errors import PlotError
+from pp_gen.plotting.builder import Curve, build_figure, has_cjk, state_colors
+from pp_gen.plotting.spec import FigureSpec, infer_quantity, infer_x_unit, load as load_spec
+from pp_gen.plotting.dispatch import plot
+from pp_gen.ld1.wavefunctions import canon_quantity, read_wfc, state_sort_key, transform
 
 REFERENCE_DIR = (Path(__file__).resolve().parent.parent.parent / "ppgen"
                  / "script" / "runs" / "ae_radial")
@@ -149,7 +150,8 @@ def test_plot_styles_the_two_halves_apart(tmp_path, monkeypatch):
     matplotlib.use("Agg")
     from matplotlib.legend import Legend
     from conftest import write_plot_json
-    import pp_gen.plotter as plotter
+    import pp_gen.plotting.dispatch as plotter
+    import pp_gen.plotting.wavefunction as wavefunction
 
     (tmp_path / "ld1ps.wfc").write_text(
         "#  r   5F   6S   5F   6S\n"
@@ -165,7 +167,7 @@ def test_plot_styles_the_two_halves_apart(tmp_path, monkeypatch):
         captured["fig"] = fig
         pathlib.Path(out).write_bytes(b"png")          # 只占位（下游要读大小）
 
-    monkeypatch.setattr(plotter, "save_figure", fake_save)
+    monkeypatch.setattr(wavefunction, "save_figure", fake_save)
 
     plotter.plot(path)
 
@@ -193,7 +195,8 @@ def test_plot_drops_the_redundant_ae_half(tmp_path, monkeypatch):
     matplotlib.use("Agg")
     from matplotlib.legend import Legend
     from conftest import write_plot_json
-    import pp_gen.plotter as plotter
+    import pp_gen.plotting.dispatch as plotter
+    import pp_gen.plotting.wavefunction as wavefunction
 
     grid = "".join(f" {0.01 * step:.2f}  {step / 10:.3f}  {step / 5:.3f}"
                    f"  {-step / 10:.3f}  {-step / 5:.3f}\n"
@@ -216,7 +219,7 @@ def test_plot_drops_the_redundant_ae_half(tmp_path, monkeypatch):
         captured["fig"] = fig
         pathlib.Path(out).write_bytes(b"png")
 
-    monkeypatch.setattr(plotter, "save_figure", fake_save)
+    monkeypatch.setattr(wavefunction, "save_figure", fake_save)
     plotter.plot(path)
 
     ax = captured["fig"].axes[0]
@@ -239,7 +242,8 @@ def test_data_orbitals_restricts_the_states(tmp_path, monkeypatch):
     import matplotlib
     matplotlib.use("Agg")
     from conftest import write_plot_json
-    import pp_gen.plotter as plotter
+    import pp_gen.plotting.dispatch as plotter
+    import pp_gen.plotting.wavefunction as wavefunction
 
     (tmp_path / "ld1.wfc").write_text(
         "#  r   5F   4F   6S\n"
@@ -256,7 +260,7 @@ def test_data_orbitals_restricts_the_states(tmp_path, monkeypatch):
         captured["fig"] = fig
         pathlib.Path(out).write_bytes(b"png")
 
-    monkeypatch.setattr(plotter, "save_figure", fake_save)
+    monkeypatch.setattr(wavefunction, "save_figure", fake_save)
     result = plotter.plot(path)
 
     ax = captured["fig"].axes[0]
@@ -269,7 +273,8 @@ def test_data_orbitals_restricts_the_states(tmp_path, monkeypatch):
 
 def test_data_orbitals_unknown_name_warns_but_keeps_going(tmp_path):
     from conftest import write_plot_json
-    import pp_gen.plotter as plotter
+    import pp_gen.plotting.dispatch as plotter
+    import pp_gen.plotting.wavefunction as wavefunction
 
     (tmp_path / "ld1.wfc").write_text(
         "#  r   5F   6S\n"
@@ -287,7 +292,8 @@ def test_data_orbitals_unknown_name_warns_but_keeps_going(tmp_path):
 
 def test_data_orbitals_nothing_matches_is_an_error(tmp_path):
     from conftest import write_plot_json
-    import pp_gen.plotter as plotter
+    import pp_gen.plotting.dispatch as plotter
+    import pp_gen.plotting.wavefunction as wavefunction
 
     (tmp_path / "ld1.wfc").write_text(
         "#  r   5F\n" + "".join(f" {0.01 * step:.2f}  {step / 10:.3f}\n"
@@ -302,7 +308,7 @@ def test_data_orbitals_nothing_matches_is_an_error(tmp_path):
 
 def test_data_orbitals_rejects_nonsense(tmp_path):
     from conftest import write_plot_json
-    from pp_gen.plot_spec import load
+    from pp_gen.plotting.spec import load
 
     path = write_plot_json(tmp_path, data={"wfcs": ["ld1.wfc"],
                                           "orbitals": []})
@@ -902,8 +908,8 @@ def test_full_chain_prepare_run_plot(tmp_path, monkeypatch):
         pytest.skip(f"本机没有 ld1.x：{ld1}")
     monkeypatch.delenv(config.ENV_PARAMETERS, raising=False)
 
-    from pp_gen.prepare import prepare
-    from pp_gen.runner import run
+    from pp_gen.inputs.generation import prepare
+    from pp_gen.ld1.runner import run
 
     write_input(tmp_path, qe_path=config.DEFAULT_QE_PATH)
     prepare(tmp_path / "input.json")

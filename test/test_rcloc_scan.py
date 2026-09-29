@@ -15,10 +15,15 @@ from pathlib import Path
 
 import pytest
 
-from pp_gen import cli, config, scan, update
-from pp_gen.errors import ParameterError
-from pp_gen.prepare import prepare
-from pp_gen.runner import output_json, run
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.diagnostics import selection as update
+from pp_gen.scans import points as scan
+from pp_gen.core.errors import ParameterError
+from pp_gen.inputs.generation import prepare
+from pp_gen.ld1.runner import output_json, run
+from pp_gen.scans import apply as apply
+from pp_gen.writing import namelists as namelists
 
 #: 假 ld1.x：从 stdin 里的 ``&inputp`` 读 rcloc，按"离目标差多少"挪 PS 极点。
 #: **四个通道一起挪** —— 这样"多通道池化"那条路径真的被走到了。
@@ -162,7 +167,7 @@ def test_apply_namelist_touches_only_that_key():
     sections = {"inputp": {"rcloc": 2.5, "lloc": -2}, "input": {"iswitch": 3}}
     point = scan.namelist_points(2.5, [-1.0, 0.0, 0.5])[0]
 
-    out = scan.apply_namelist(sections, point)
+    out = apply.apply_namelist(sections, point)
 
     assert out["inputp"]["rcloc"] == pytest.approx(1.5)
     assert out["inputp"]["lloc"] == -2
@@ -178,13 +183,13 @@ def test_write_namelist_value_keeps_the_rest_of_the_line(tmp_path):
     path.write_text("inputp:\n  pseudotype: 2\n  rcloc: 2.5   # 芯半径\n"
                     "  lloc: -2\ntest:\n  nconf: 1\n", encoding="utf-8")
 
-    assert scan.write_namelist_value(path, "inputp", "rcloc", 1.5) is True
+    assert namelists.write_namelist_value(path, "inputp", "rcloc", 1.5) is True
     text = path.read_text(encoding="utf-8")
     assert "  rcloc: 1.5   # 芯半径\n" in text
     assert "  pseudotype: 2\n" in text and "  lloc: -2\n" in text
     assert "test:\n  nconf: 1\n" in text
     # 值没变（写法不同也算没变）就不再写
-    assert scan.write_namelist_value(path, "inputp", "rcloc", 1.500) is False
+    assert namelists.write_namelist_value(path, "inputp", "rcloc", 1.500) is False
 
 
 def test_write_namelist_value_inserts_a_missing_key(tmp_path):
@@ -192,14 +197,14 @@ def test_write_namelist_value_inserts_a_missing_key(tmp_path):
     path.write_text("inputp:\n  pseudotype: 2\ntest:\n  nconf: 1\n",
                     encoding="utf-8")
 
-    assert scan.write_namelist_value(path, "inputp", "rcloc", 2.0) is True
+    assert namelists.write_namelist_value(path, "inputp", "rcloc", 2.0) is True
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "inputp:"
     assert lines[1] == "  rcloc: 2.0"               # 插在段内第一行
     assert "  pseudotype: 2" in lines
 
     with pytest.raises(ParameterError, match="找不到 &input"):
-        scan.write_namelist_value(path, "input", "rcloc", 2.0)
+        namelists.write_namelist_value(path, "input", "rcloc", 2.0)
 
 
 # --------------------------------------------------------------------------
@@ -320,7 +325,7 @@ def test_range_is_required(tmp_path, monkeypatch):
 # 报告：这类量按"所有通道"排序
 # --------------------------------------------------------------------------
 def test_report_falls_back_to_all_channels(scan_root, tmp_path):
-    from pp_gen import report as report_mod
+    from pp_gen.reporting import report as report_mod
 
     batch = run(scan_root / "input.json")
     out = scan_root / "output.json"

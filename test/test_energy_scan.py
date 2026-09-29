@@ -20,10 +20,15 @@ from pathlib import Path
 
 import pytest
 
-from pp_gen import cli, config, scan, update
-from pp_gen.errors import ParameterError
-from pp_gen.prepare import prepare
-from pp_gen.runner import output_json, run
+from pp_gen import cli
+from pp_gen.core import settings as config
+from pp_gen.diagnostics import selection as update
+from pp_gen.scans import points as scan
+from pp_gen.core.errors import ParameterError
+from pp_gen.inputs.generation import prepare
+from pp_gen.ld1.runner import output_json, run
+from pp_gen.scans import apply as apply
+from pp_gen.writing import cards as writing_cards
 
 #: 假程序心里的"最佳 ener"：每个点按目录名里的值算离它多远
 FAKE_LD1 = '''\
@@ -275,7 +280,7 @@ def test_apply_energy_touches_only_that_card():
     point = scan.energy_points([("5F-2", "5F", 3, -0.60, 2)],
                                [-0.05, 0.05, 0.1])[0]
 
-    out = scan.apply_energy(sections, point)
+    out = apply.apply_energy(sections, point)
 
     assert out["orbitals"][0][4] == pytest.approx(0.0)      # 占据的那张没动
     assert out["orbitals"][1][4] == pytest.approx(-0.65)
@@ -289,16 +294,16 @@ def test_write_card_ener_rewrites_one_line(tmp_path):
     path = tmp_path / "cards.yml"
     path.write_text(CARDS_YML, encoding="utf-8")
 
-    assert scan.write_card_ener(path, 5, "5F", -0.55) is True
+    assert writing_cards.write_card_ener(path, 5, "5F", -0.55) is True
     text = path.read_text(encoding="utf-8")
     assert energ_of(card_line(text, "5F", 2)) == pytest.approx(-0.55)
     assert energ_of(card_line(text, "5F", 1)) == pytest.approx(0.0)
     assert energ_of(card_line(text, "6D", 2)) == pytest.approx(-0.05)
     # 值没变就不再写
-    assert scan.write_card_ener(path, 5, "5F", -0.55) is False
+    assert writing_cards.write_card_ener(path, 5, "5F", -0.55) is False
     # 序号与标签对不上要当场说（第 4 张是 6D）
     with pytest.raises(ParameterError, match="不是 5F"):
-        scan.write_card_ener(path, 4, "5F", -0.5)
+        writing_cards.write_card_ener(path, 4, "5F", -0.5)
 
 
 # --------------------------------------------------------------------------
@@ -419,8 +424,8 @@ def test_cli_ener_filter(scan_root, capsys):
 # 报告的轴
 # --------------------------------------------------------------------------
 def test_report_headers_follow_the_scan_axis(scan_root, tmp_path):
-    from pp_gen.report import render_markdown
-    from pp_gen.plot_spec import load as load_spec
+    from pp_gen.reporting.markdown import render_markdown
+    from pp_gen.plotting.spec import load as load_spec
 
     batch = run(scan_root / "input.json", only=["6D-2"])
     payload = output_json(batch)
@@ -434,7 +439,7 @@ def test_report_headers_follow_the_scan_axis(scan_root, tmp_path):
     }, indent=1), encoding="utf-8")
 
     spec = load_spec(plot_json)
-    from pp_gen.report import analyse_point, OrbitalReport
+    from pp_gen.reporting.metrics import analyse_point, OrbitalReport
 
     tasks = payload["tasks"]
     points = tuple(analyse_point(task, spec, metric="median")
@@ -454,8 +459,8 @@ def test_report_headers_follow_the_scan_axis(scan_root, tmp_path):
 
 def test_report_uses_the_rcut_axis_for_old_records(scan_root, tmp_path):
     """老的 output.json 没有 "scanned" 也没有 "ener"：仍按 rcut 那一套走。"""
-    from pp_gen.report import analyse_point
-    from pp_gen.plot_spec import load as load_spec
+    from pp_gen.reporting.metrics import analyse_point
+    from pp_gen.plotting.spec import load as load_spec
 
     batch = run(scan_root / "input.json", only=["6D-2"])
     payload = output_json(batch)

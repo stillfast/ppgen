@@ -15,7 +15,7 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pp_gen import config  # noqa: E402  （必须在 sys.path 调整之后）
+from pp_gen.core import settings as config
 
 AE_YML = """\
 input:

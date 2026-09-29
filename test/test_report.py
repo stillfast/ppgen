@@ -19,8 +19,9 @@ import pytest
 
 from conftest import sign_rows, write_dlog
 from pp_gen import cli
-from pp_gen.report import (METRIC_NAMES, ReportError, channel_of,
-                           classify_inputs, format_pole_delta, report)
+from pp_gen.reporting.markdown import format_pole_delta
+from pp_gen.reporting.metrics import METRIC_NAMES, ReportError, channel_of
+from pp_gen.reporting.report import classify_inputs, report
 
 PLOT_JSON = {
     "mode": "logfunction",
@@ -262,13 +263,13 @@ def test_figures_can_be_turned_off(scan):
 
 def test_a_render_failure_only_warns(scan, monkeypatch):
     """某个点画图失败不该让整份报告失败。"""
-    from pp_gen.errors import PlotError
-    import pp_gen.plotter
+    from pp_gen.core.errors import PlotError
+    import pp_gen.plotting.dispatch as plotter
 
     def boom(*args, **kwargs):
         raise PlotError("故意失败")
 
-    monkeypatch.setattr(pp_gen.plotter, "plot_with_spec", boom)
+    monkeypatch.setattr(plotter, "plot_with_spec", boom)
 
     result = report([scan / "output.json", scan / "plot.json"])
 
@@ -390,7 +391,7 @@ def test_report_requires_logfunction_mode(tmp_path):
     path.write_text(json.dumps({"mode": "wavefunction",
                                 "data": {"wfcs": ["ld1.wfc"]},
                                 "figure": {"xlim": [0, 1]}}), encoding="utf-8")
-    from pp_gen.errors import PlotError
+    from pp_gen.core.errors import PlotError
 
     with pytest.raises(PlotError, match="logfunction"):
         report([run, path])
@@ -506,7 +507,7 @@ def test_pole_delta_ties_fall_back_to_the_error_median(tmp_path):
 
 def test_pole_unmatched_pairs_are_infinite(tmp_path):
     """窗口里压根没有 AE 极点可配 → ΔE 记 ∞，排在同一组最后。"""
-    from pp_gen.report import pole_stats
+    from pp_gen.reporting.metrics import pole_stats
 
     features = {1: {"poles": {"coincide": False,
                               "pairs": [{"ae": None, "ps": 1.0, "delta": None}]}}}
@@ -646,7 +647,7 @@ def test_decision_figure_can_be_turned_off(tmp_path):
 
 def test_decision_panels_carry_both_criteria(tmp_path):
     """每个点都要带上"主轴"和"对照量"，与报告选中的那个 r_c 一起。"""
-    from pp_gen.report import decision_panels
+    from pp_gen.plotting.decision import decision_panels
 
     root = tmp_path / "rc_scan"
     root.mkdir()
@@ -689,7 +690,7 @@ def test_decision_panels_carry_both_criteria(tmp_path):
 
 
 def test_decision_spec_labels(tmp_path):
-    from pp_gen.report import decision_name, decision_spec
+    from pp_gen.plotting.decision import decision_name, decision_spec
 
     pole = decision_spec("pole", "scanned", 0.02)
     assert pole.primary_label == "pole ΔE (sum, Ry)"
@@ -712,8 +713,8 @@ def test_decision_figure_draws_both_criteria(tmp_path):
     import matplotlib
     matplotlib.use("Agg")
 
-    from pp_gen.decision import build_figure
-    from pp_gen.report import decision_panels, decision_spec
+    from pp_gen.plotting.decision import build_figure
+    from pp_gen.plotting.decision import decision_panels, decision_spec
 
     root = tmp_path / "rc_scan"
     root.mkdir()
@@ -742,13 +743,13 @@ def test_decision_figure_draws_both_criteria(tmp_path):
 
 
 def test_decision_failure_only_warns(tmp_path, monkeypatch):
-    from pp_gen.errors import PlotError
-    import pp_gen.decision
+    from pp_gen.core.errors import PlotError
+    import pp_gen.plotting.decision as decision
 
     def boom(*args, **kwargs):
         raise PlotError("故意失败")
 
-    monkeypatch.setattr(pp_gen.decision, "draw", boom)
+    monkeypatch.setattr(decision, "draw", boom)
     root = tmp_path / "rc_scan"
     root.mkdir()
     write_scan(root, [("5F", 1.0, {"scanned_error": 0.5})])

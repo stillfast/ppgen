@@ -25,6 +25,8 @@
 * ``stdout`` -> ``U.out``，``stderr`` -> ``U.err``（同时回显到终端）。
 """
 from __future__ import annotations
+from ..scans import axis as axis
+from ..scans import settings as settings
 
 import json
 import os
@@ -86,7 +88,7 @@ class RunResult:
     #: 扫描值（rc 扫描是 rcut，能量扫描是 ener）
     rcut: Optional[float] = None
     #: 扫的是哪一列 —— 报告与 ``output.json`` 的键名/单位都看它
-    axis: scan.Axis = scan.RCUT_AXIS
+    axis: axis.Axis = axis.RCUT_AXIS
     #: ``configts`` 工作流：这个点用的测试组态（别的工况是空串）
     config: str = ""
     returncode: Optional[int] = None
@@ -340,7 +342,7 @@ def run(input_path: Optional[Path] = None, *, outdir: Optional[Path] = None,
         groups = [[name] for name in update.orbital_order(probe.scan_points)]
     elif spec.enabled and dry_run:
         warnings.append(
-            f"扫描参数里开了 {update.UPDATE_KEY}（{spec.describe()}），"
+            f"扫描参数里开了 {settings.UPDATE_KEY}（{spec.describe()}），"
             f"但这次是干跑：不会跑、也不会更新扫描值")
     if spec.enabled and not spec.window and probe.scan_points:
         note = update.wide_window_note(spec, probe.sections)
@@ -456,7 +458,7 @@ def _candidates(prepared: PrepareResult, spec: update.UpdateSpec, runs=()):
                                   sections=prepared.sections,
                                   channel=getattr(point, "channel", None),
                                   channels=getattr(point, "channels", None),
-                                  axis=getattr(point, "axis", scan.RCUT_AXIS))
+                                  axis=getattr(point, "axis", axis.RCUT_AXIS))
         if measured is not None:
             found.append(measured)
     return found

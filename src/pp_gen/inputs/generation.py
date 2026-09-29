@@ -10,6 +10,9 @@
    补上默认 QE 路径并写回 ``input.json``；已经写了真路径就尊重它。
 """
 from __future__ import annotations
+from ..scans import apply as apply
+from ..scans import axis as axis
+from ..scans import settings as settings
 
 import os
 from dataclasses import dataclass, field
@@ -38,7 +41,7 @@ class PrepareTarget:
     orbital: str = ""
     rcut: Optional[float] = None
     #: 扫的是哪一列（单份输入是默认的 rcut 轴）
-    axis: object = scan.RCUT_AXIS
+    axis: object = axis.RCUT_AXIS
     #: ``configts`` 工作流：这个点用的测试组态（别的工况是空串）
     config: str = ""
 
@@ -183,13 +186,13 @@ def prepare(input_path: Path, *, outdir: Optional[Path] = None,
         if point is None:
             point_sections = sections
         elif isinstance(point, scan.ConfigPoint):
-            point_sections = scan.apply_config(sections, point)
+            point_sections = apply.apply_config(sections, point)
         elif isinstance(point, scan.EnergyPoint):
-            point_sections = scan.apply_energy(sections, point)
+            point_sections = apply.apply_energy(sections, point)
         elif isinstance(point, scan.NamelistPoint):
-            point_sections = scan.apply_namelist(sections, point)
+            point_sections = apply.apply_namelist(sections, point)
         else:
-            point_sections = scan.apply(sections, point)
+            point_sections = apply.apply(sections, point)
         text = render_sections(point_sections,
                                parameters.section_order(point_sections))
         base = target_dir / relative_dir if relative_dir is not None else target_dir
@@ -202,13 +205,13 @@ def prepare(input_path: Path, *, outdir: Optional[Path] = None,
             label=point.label if point is not None else "",
             orbital=getattr(point, "group", "") if point is not None else "",
             rcut=getattr(point, "value", None) if point is not None else None,
-            axis=getattr(point, "axis", scan.RCUT_AXIS) if point is not None
-            else scan.RCUT_AXIS,
+            axis=getattr(point, "axis", axis.RCUT_AXIS) if point is not None
+            else axis.RCUT_AXIS,
             config=getattr(point, "config", "") if point is not None else ""))
 
     # 只有真的逐点扫描才有 runs/ 目录（单次运行模式没有点）
     any_point = any(point is not None for _, point in variants)
-    runs_dir = target_dir / scan.RUNS_DIR if any_point else None
+    runs_dir = target_dir / settings.RUNS_DIR if any_point else None
     scan_sections: Mapping[str, Any] = {}
     if workflow.scans and workflow.scan_group:
         aux = next((item for item in sets if item.group == workflow.scan_group),
@@ -274,12 +277,12 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
                 f"'{workflow.scan_group}' —— 两种模式至少要有一个")
         # 逐组态：每个 configts 一项，只改 &test 的 configts(1)
         ignored = sorted(set(aux.sections)
-                         - {scan.CONFIGTS_KEY, scan.REFERENCE_KEY})
+                         - {settings.CONFIGTS_KEY, settings.REFERENCE_KEY})
         if ignored:
             warnings.append(
                 f"组态参数（{aux.path}）里的 {ignored} 不再使用，已被忽略")
         warnings += scan.check_config_setup(
-            sections, multiple=len(aux.sections[scan.CONFIGTS_KEY]) > 1)
+            sections, multiple=len(aux.sections[settings.CONFIGTS_KEY]) > 1)
         # 被测的那份 PP 与其它设置都写在参数文件的 &test / &input 里，
         # 这里只管"测哪些组态"（相对路径按 run 目录解析，因为 ld1.x 是在
         # 每个点的目录里跑的）
@@ -294,7 +297,7 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
                 if not path.is_file():
                     warnings.append(
                         f"参数文件里的 file_pseudo 找不到：{path}")
-        points = scan.config_points(aux.sections[scan.CONFIGTS_KEY],
+        points = scan.config_points(aux.sections[settings.CONFIGTS_KEY],
                                     only=only, rc=rc, file_pseudo=pseudo)
         if only and note_filters:
             warnings.append(f"按 --only 过滤后只剩 {len(points)} 个组态")
@@ -312,9 +315,9 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
     if aux is None:                                     # pragma: no cover
         raise InputError(f"工作流 '{workflow.name}' 缺少扫描参数组 "
                          f"'{workflow.scan_group}'")
-    if workflow.scan_kind in scan.NAMELIST_SCANS:
+    if workflow.scan_kind in axis.NAMELIST_SCANS:
         # namelist 里一个标量：rcloc（&inputp）/ rlderiv（&input）
-        spec = scan.namelist_scan(workflow.scan_kind)
+        spec = axis.namelist_scan(workflow.scan_kind)
         key, section = spec["key"], spec["section"]
         written = [name for name in spec["range_keys"] if name in aux.sections]
         if not written:
@@ -324,7 +327,7 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
                 f"两端都为正、又把 {key} 现在的值包在里面时按**绝对值**取，"
                 f"否则按相对它的偏移）")
         range_key = written[0]
-        ignored = sorted(set(aux.sections) - {range_key, scan.UPDATE_KEY})
+        ignored = sorted(set(aux.sections) - {range_key, settings.UPDATE_KEY})
         if ignored:
             warnings.append(
                 f"扫描参数（{aux.path}）里的 {ignored} 不再使用，已被忽略")
@@ -337,13 +340,13 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
         return [(point.relative_dir, point) for point in points]
     if workflow.scan_kind == "ener":
         # 能量扫描：扫的是 occ=0 的额外投影算子卡片第 5 列的 ener
-        if scan.ENERGY_RANGE_KEY not in aux.sections:
+        if settings.ENERGY_RANGE_KEY not in aux.sections:
             raise InputError(
-                f"扫描参数（{aux.path}）里没有 {scan.ENERGY_RANGE_KEY} —— "
+                f"扫描参数（{aux.path}）里没有 {settings.ENERGY_RANGE_KEY} —— "
                 f"它要写成 [起点, 终点, 步长]，例如 [-0.2, 0.2, 0.05]"
                 f"（**相对每张 occ=0 卡片现在的 ener 的偏移**，与 rc_range 一样）")
         ignored = sorted(set(aux.sections)
-                         - {scan.ENERGY_RANGE_KEY, scan.UPDATE_KEY})
+                         - {settings.ENERGY_RANGE_KEY, settings.UPDATE_KEY})
         if ignored:
             warnings.append(
                 f"扫描参数（{aux.path}）里的 {ignored} 不再使用，已被忽略")
@@ -359,7 +362,7 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
             scan.check_card_count(sections, extra)
             raise InputError(f"{exc}；另外：{'；'.join(extra)}") from None \
                 if extra else exc
-        points = scan.energy_points(centers, aux.sections[scan.ENERGY_RANGE_KEY],
+        points = scan.energy_points(centers, aux.sections[settings.ENERGY_RANGE_KEY],
                                     only=only, ener=ener, warnings=warnings)
         if (only or ener) and note_filters:
             warnings.append(f"按 --only/--ener 过滤后只剩 {len(points)} 个扫描点")
@@ -368,7 +371,7 @@ def _variants(workflow: workflows.Workflow, sets: Sequence[parameters.ParameterS
         raise InputError(
             f"扫描参数（{aux.path}）里没有 rc_range —— 它要写成 "
             f"[起点, 终点, 步长]，例如 [-0.5, 0.5, 0.1]")
-    ignored = sorted(set(aux.sections) - {"rc_range", scan.UPDATE_KEY})
+    ignored = sorted(set(aux.sections) - {"rc_range", settings.UPDATE_KEY})
     if ignored:
         warnings.append(
             f"扫描参数（{aux.path}）里的 {ignored} 不再使用，已被忽略"

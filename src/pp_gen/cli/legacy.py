@@ -9,6 +9,8 @@
 后续的 analyze 之类按同样的方式在 :func:`build_parser` 里加。
 """
 from __future__ import annotations
+from ..scans import settings as settings
+from ..scans import axis as axis
 
 import argparse
 import sys
@@ -283,7 +285,7 @@ def _report_scan_prepare(result: PrepareResult, *, dry_run: bool) -> None:
     if result.scan_points and isinstance(result.scan_points[0], scan.NamelistPoint):
         point = result.scan_points[0]
         ranges = [name for name in result.scan_sections
-                  if name != scan.UPDATE_KEY]
+                  if name != settings.UPDATE_KEY]
         print(f"扫描       : {scan.describe_namelist(result.scan_points)}"
               f"（&{point.section} 的 {point.key}，范围写在 {ranges or '?'} 里，"
               f"每个值一个目录）")
@@ -291,7 +293,7 @@ def _report_scan_prepare(result: PrepareResult, *, dry_run: bool) -> None:
             print(f"           : {name}  = {values}"
                   f"   ->  {prefix}/{point.axis.tag}*/")
     elif result.scan_points and isinstance(result.scan_points[0], scan.EnergyPoint):
-        key = scan.ENERGY_RANGE_KEY
+        key = settings.ENERGY_RANGE_KEY
         print(f"扫描       : {scan.describe_energy(result.scan_points)}"
               f"（中心取每张 occ=0 卡片现在的 ener + {key} 偏移，"
               f"每张卡片一个目录）")
@@ -421,7 +423,7 @@ def _report_updates(result: BatchResult) -> None:
         head = (f"{item.orbital} → "
                 f"{update.describe_value(item.axis, item.value)}")
         if item.previous is not None:
-            head += (f"（原 {scan.format_value(item.axis, item.previous)}）")
+            head += (f"（原 {axis.format_value(item.axis, item.previous)}）")
         print(f"更新 {item.axis.key}: {head}")
         if item.directory is not None:
             detail = f"最佳点 {_path_short(item.directory)}"
@@ -536,7 +538,7 @@ def _report_report(result) -> None:
         print(f"排序       : |ΔL| 的{METRIC_NAMES[result.metric]}"
               f"（范围：{scope_name}）")
     axis_key = (result.orbitals[0].axis.key if result.orbitals
-                else scan.RCUT_AXIS.key)
+                else axis.RCUT_AXIS.key)
     print(f"最佳 {axis_key}:")
     for item in result.orbitals:
         if item.best is None:

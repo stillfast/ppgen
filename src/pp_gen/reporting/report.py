@@ -22,6 +22,7 @@
 里的 ``analysis.pole_threshold``）。
 """
 from __future__ import annotations
+from ..scans import axis as scan_axis
 
 import json
 import re
@@ -94,7 +95,7 @@ class PointMetrics:
     #: 画图/写 parser.json 失败时的原因
     render_error: str = ""
     #: 扫的是哪一列（表头、单位、选择依据图的横轴都看它）
-    axis: object = scan.RCUT_AXIS
+    axis: object = scan_axis.RCUT_AXIS
 
     @property
     def n_channels(self) -> int:
@@ -178,7 +179,7 @@ class OrbitalReport:
     points: Tuple[PointMetrics, ...]
     best: Optional[PointMetrics]
     #: 扫的是哪一列（表头/单位/图轴都用它）
-    axis: object = scan.RCUT_AXIS
+    axis: object = scan_axis.RCUT_AXIS
 
     @property
     def usable(self) -> Tuple[PointMetrics, ...]:
@@ -340,7 +341,7 @@ def analyse_point(task: Mapping[str, object], spec: PlotSpec, *,
     directory = Path(str(task.get("directory", "")))
     orbital = str(task.get("orbital") or "")
     # 扫描值在哪个键上由任务自己的 "scanned" 说了算（老记录只有 "rcut"）
-    axis = scan.axis_of(task.get("scanned"))
+    axis = scan_axis.axis_of(task.get("scanned"))
     raw = task.get(axis.key, task.get("rcut"))
     label = str(task.get("label") or directory.name)
     value = float(raw) if isinstance(raw, (int, float)) else None
@@ -538,7 +539,7 @@ def report(inputs: Sequence[Path], *, metric: str = "median",
     rank_metric = POLE_FALLBACK if metric == "pole" else metric
     tasks = read_tasks(output_json)
     warnings: List[str] = []
-    axis = scan.axis_of(tasks[0].get("scanned"))
+    axis = scan_axis.axis_of(tasks[0].get("scanned"))
     if scope == "scanned" and axis.column is None:
         # namelist 标量（rcloc / rlderiv）影响**整份赝势**（所有通道），
         # 没有"被扫轨道对应的通道"这一说
@@ -665,8 +666,8 @@ def decision_spec(metric: str, scope: str,
     """这张图的轴标题与标题（**英文**：matplotlib 默认字体没有中文字形）。"""
     from ..plotting.decision import DecisionSpec
 
-    axis = scan.axis_of(getattr(axis_key, "key", axis_key)) \
-        if axis_key is not None else scan.RCUT_AXIS
+    axis = scan_axis.axis_of(getattr(axis_key, "key", axis_key)) \
+        if axis_key is not None else scan_axis.RCUT_AXIS
     xlabel = f"{axis.key} ({axis.unit})"
     if metric == "pole":
         return DecisionSpec(
@@ -1163,13 +1164,13 @@ def render_markdown(*, output_json: Path, plot_json: Path, spec: PlotSpec,
     metric_name = METRIC_NAMES[metric]
     fallback_name = METRIC_NAMES[POLE_FALLBACK]
     by_pole = metric == "pole"
-    axis = orbitals[0].axis if orbitals else scan.RCUT_AXIS
+    axis = orbitals[0].axis if orbitals else scan_axis.RCUT_AXIS
     scope_text = ("被扫轨道对应的通道" if scope == "scanned" else "所有通道池化")
     if axis.column is None:
         scope_text = f"所有通道池化（{axis.key} 影响整份赝势）"
     lines: List[str] = []
     lines.append(f"# {axis.key} 扫描报告"
-                 if axis is not scan.RCUT_AXIS else "# rc_scan 报告")
+                 if axis is not scan_axis.RCUT_AXIS else "# rc_scan 报告")
     lines.append("")
     lines.append(f"- 运行记录：`{output_json}`")
     lines.append(f"- 分析模板：`{plot_json}`")
@@ -1394,7 +1395,7 @@ def _channel_name(channel: Optional[int]) -> str:
 
 
 def _decision_note(metric: str, by_pole: bool,
-                   axis: object = scan.RCUT_AXIS) -> str:
+                   axis: object = scan_axis.RCUT_AXIS) -> str:
     """描述"选择依据图"的两个轴（报告正文里那句话）。"""
     key = getattr(axis, "key", "rcut")
     if by_pole:
